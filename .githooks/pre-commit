@@ -1,0 +1,4 @@
+#!/bin/sh
+set -eu
+python tools/privacy_guard.py --staged
+gitleaks git --staged --redact=100 --no-banner --config .gitleaks.toml

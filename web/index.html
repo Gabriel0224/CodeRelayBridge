@@ -1,0 +1,533 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>CodeRelayBridge · 远程工作台</title>
+  <link rel="stylesheet" href="/lite/vendor/katex/katex.min.css">
+  <link rel="stylesheet" href="/lite/vendor/xterm.css">
+  <link rel="stylesheet" href="/lite/style.css">
+  <script src="/lite/vendor/markdown-it.min.js" defer></script>
+  <script src="/lite/vendor/katex/katex.min.js" defer></script>
+  <script src="/lite/vendor/katex/auto-render.min.js" defer></script>
+  <script src="/lite/vendor/xterm.js" defer></script>
+  <script src="/lite/vendor/xterm-addon-fit.js" defer></script>
+  <script src="/lite/requests.js" defer></script>
+  <script src="/lite/i18n-catalog.js" defer></script>
+  <script src="/lite/i18n.js" defer></script>
+  <script src="/lite/app.js" defer></script>
+  <script src="/lite/vendor/native-ui.js" defer></script>
+</head>
+<body>
+<section id="login" hidden>
+  <form id="loginForm">
+    <div class="brand">◈ <span class="brand-label">CodeRelayBridge</span></div>
+    <h1>回到你的工作现场</h1>
+    <p>连接各台设备上的 Codex 对话。</p>
+    <label for="password">工作台访问密码</label>
+    <input id="password" type="password" autocomplete="current-password" required>
+    <button type="submit">进入工作台 →</button>
+    <p id="loginError" role="alert"></p>
+    <small>私人 Tailscale 网络 · 桌面会话桥接</small>
+  </form>
+</section>
+
+<div id="workspace" hidden>
+  <aside id="sidebar">
+    <div class="brand">◈ <button id="brandEditTrigger" class="brand-edit-trigger" type="button" title="双击修改工作台名称" aria-label="工作台名称，双击修改">CodeRelayBridge</button><span id="appVersion" class="version-pill" hidden></span><button id="sidebarClose" class="sidebar-close" type="button" aria-label="隐藏侧栏" title="隐藏侧栏">×</button></div>
+    <div class="sidebar-meta"><span id="connection" role="status" aria-live="polite" title="正在连接…">正在连接…</span></div>
+    <div class="sidebar-utility-actions">
+      <button id="panelRestartToggle" class="secondary sidebar-utility-button" type="button" title="完整重启面板服务或全部面板组件"><svg class="sidebar-utility-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 3v9M6.3 5.7a8 8 0 1 0 11.4 0"/></svg><span>重启面板</span></button>
+      <button id="logout" class="secondary sidebar-utility-button" type="button" title="退出工作台登录"><svg class="sidebar-utility-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 4H4v16h5M9 12h11m-4-4 4 4-4 4"/></svg><span>退出</span></button>
+    </div>
+
+    <button id="newThread" class="new-thread-button" type="button">
+      <span aria-hidden="true">＋</span><span>新对话</span>
+    </button>
+
+    <div class="sidebar-controls">
+      <label class="control-label" for="application">应用</label>
+      <select id="application" aria-label="选择应用"></select>
+      <label id="deviceSidebarLabel" class="control-label" for="device">电脑</label>
+      <select id="device" aria-label="选择电脑"></select>
+
+      <div id="projectSidebarLabel" class="control-label project-label"><span>项目</span><span id="projectCount"></span></div>
+      <div id="projectSidebarControls" class="project-controls">
+        <select id="projectFilter" aria-label="按项目筛选"></select>
+        <button id="addProject" class="icon-button" type="button" title="添加项目">＋</button>
+      </div>
+
+      <label class="control-label" for="archiveFilter">会话</label>
+      <select id="archiveFilter" aria-label="筛选活跃或归档会话">
+        <option value="active">活跃会话</option>
+        <option value="archived">已归档</option>
+        <option value="all">全部会话</option>
+      </select>
+    </div>
+
+    <label class="search"><span>⌕</span><input id="search" placeholder="搜索对话或项目" autocomplete="off"></label>
+    <nav id="catalog" aria-label="项目与对话"></nav>
+    <div class="aside-bottom">
+      <div class="aside-actions">
+        <label class="language-picker" title="语言"><select id="languageSelect" data-language-select aria-label="语言"><option value="zh">中文</option><option value="en">English</option></select></label>
+        <button id="themeToggle" class="quiet" type="button" aria-label="切换日间主题">☀ 日间</button>
+        <div class="theme-picker">
+          <button id="paletteToggle" class="quiet" type="button" aria-haspopup="menu" aria-controls="paletteMenu" aria-expanded="false" title="选择主题配色"><svg class="theme-picker-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3a9 9 0 1 0 0 18h1a2 2 0 0 0 1.4-3.4 1.5 1.5 0 0 1 1.1-2.6H18a3 3 0 0 0 3-3 9 9 0 0 0-9-9Z"/><circle cx="7.5" cy="10" r=".7"/><circle cx="10" cy="6.8" r=".7"/><circle cx="14.5" cy="7" r=".7"/><circle cx="17" cy="10.5" r=".7"/></svg><span>主题</span><span aria-hidden="true">⌃</span></button>
+          <div id="paletteMenu" class="theme-menu" role="menu" aria-label="主题配色" hidden>
+            <button type="button" role="menuitemradio" data-palette-option="green" aria-checked="true"><span class="theme-swatch" aria-hidden="true"></span><span>绿色</span><span class="theme-check" aria-hidden="true">✓</span></button>
+            <button type="button" role="menuitemradio" data-palette-option="red" aria-checked="false"><span class="theme-swatch" aria-hidden="true"></span><span>红色</span><span class="theme-check" aria-hidden="true">✓</span></button>
+            <button type="button" role="menuitemradio" data-palette-option="blue" aria-checked="false"><span class="theme-swatch" aria-hidden="true"></span><span>蓝色</span><span class="theme-check" aria-hidden="true">✓</span></button>
+            <button type="button" role="menuitemradio" data-palette-option="yellow" aria-checked="false"><span class="theme-swatch" aria-hidden="true"></span><span>黄色</span><span class="theme-check" aria-hidden="true">✓</span></button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <div id="sidebarResizer" class="pane-resizer vertical" role="separator" aria-label="调整会话栏宽度" aria-orientation="vertical" tabindex="0"></div>
+
+  <main>
+    <header>
+      <button id="menu" type="button" aria-controls="sidebar" aria-expanded="true" aria-label="隐藏侧栏" title="隐藏侧栏"><span class="sidebar-toggle-icon" aria-hidden="true">☰</span><span class="sidebar-toggle-label">隐藏侧栏</span></button>
+      <div class="thread-heading">
+        <h1 id="title">选择一个对话</h1>
+        <div class="thread-subheading">
+          <div id="subtitle">先选择电脑，再选择项目和对话</div>
+          <button id="locateProject" class="secondary" type="button" aria-label="定位当前对话的项目" title="在侧栏定位当前对话的项目" hidden disabled><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 7V5a1 1 0 0 1 1-1h5l2 3h9a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7Z"/><path d="M8 14h8m-3-3 3 3-3 3"/></svg><span>定位项目</span></button>
+          <span id="status" class="status">等待选择</span>
+        </div>
+      </div>
+      <div class="workspace-tools" aria-label="对话工具">
+        <div class="workspace-tool-row">
+          <button id="refreshThread" class="secondary" data-icon="↻" aria-label="刷新对话" type="button" title="重新读取目标 App 的最新对话" disabled>↻ 刷新对话</button>
+          <button id="trafficToggle" class="secondary" data-icon="↕" aria-label="流量" type="button" title="查看公网面板流量">↕ 流量</button>
+          <button id="codexUpdatesToggle" class="secondary" data-icon="↑" type="button" hidden>↑ 软件更新</button>
+          <button id="terminalToggle" class="secondary" data-icon="›_" aria-label="终端" type="button" title="打开当前电脑的终端">›_ 终端</button>
+        </div>
+        <div class="workspace-tool-row">
+          <button id="fileManagerToggle" class="secondary" data-icon="▤" aria-label="文件" type="button" title="浏览当前电脑的文件">▤ 文件</button>
+          <button id="subagentsToggle" class="secondary" data-icon="⑂" aria-label="子智能体" type="button" title="查看原 App 的子智能体" hidden>⑂ 子智能体</button>
+          <button id="nativeSettingsToggle" class="secondary" data-icon="⚙" aria-label="设置" type="button" title="管理当前对话的原生功能">⚙ 设置</button>
+          <button id="filePreviewToggle" class="secondary" data-icon="▣" aria-label="预览文件" type="button" title="重新打开已预览的文件" disabled>▣ 预览 <span id="filePreviewCount">0</span></button>
+          <label class="font-size-control" for="fontSize">
+            <span>A</span><input id="fontSize" type="range" min="5" max="32" step="1" value="13"><output id="fontSizeValue" for="fontSize">13</output>
+          </label>
+          <button id="layoutReset" class="secondary" data-icon="↺" aria-label="重置布局" type="button" title="恢复默认区块尺寸与字号">↺ 重置</button>
+        </div>
+      </div>
+    </header>
+
+    <div id="completionNotice" role="status" aria-live="polite" hidden>
+      <span class="completion-notice-icon" aria-hidden="true">✓</span>
+      <button id="completionOpen" type="button"></button>
+      <button id="completionDismiss" type="button" aria-label="关闭完成提示">×</button>
+    </div>
+    <section id="notice" aria-label="待确认请求" hidden></section>
+    <section id="timeline" aria-label="对话内容">
+      <div class="empty"><div class="empty-icon">◈</div><h2>工作在原来的设备上继续</h2><p>这里显示桌面 App 的原对话、执行过程和回复。</p></div>
+    </section>
+    <div id="composerResizer" class="pane-resizer horizontal" role="separator" aria-label="调整输入区高度" aria-orientation="horizontal" tabindex="0"></div>
+    <div id="composer">
+      <div class="composer-top">
+        <div class="composer-settings-bar">
+          <button id="modelSettingsToggle" class="model-settings-toggle" type="button" aria-expanded="false" aria-controls="modelControls" hidden><span id="modelSettingsSummary">当前模型 · 推理档位</span><span class="settings-chevron" aria-hidden="true">⌄</span></button>
+          <label class="permission-switch" for="fullAccess" title="控制原 Codex 对话后续轮次的文件、命令与网络访问权限" hidden>
+            <input id="fullAccess" type="checkbox"><span>完全访问</span>
+          </label>
+          <button id="jumpBottom" type="button" aria-label="跳至最新" title="跳至最新" hidden aria-hidden="true">↓</button>
+        </div>
+        <div id="modelControls" class="model-controls" hidden>
+          <label for="modelSelect">模型</label><select id="modelSelect"></select>
+          <label for="effortSelect">推理</label><select id="effortSelect"></select>
+          <div class="settings-actions">
+            <button id="cancelSettings" class="secondary" type="button">取消</button>
+            <button id="applySettings" class="secondary" type="button">应用</button>
+          </div>
+        </div>
+      </div>
+      <div id="queuedMessages" class="queued-messages" hidden aria-label="待发送消息队列"></div>
+      <form id="messageForm" aria-label="消息输入与附件拖放区">
+        <div id="uploadTray" class="upload-tray" hidden aria-label="待发送附件"></div>
+        <textarea id="message" rows="3" maxlength="32000" enterkeyhint="enter" placeholder="向原来的 Codex 对话发送消息…" disabled></textarea>
+        <input id="fileInput" type="file" multiple hidden>
+        <div class="composer-actions">
+          <div class="composer-left">
+            <button id="addAttachment" class="attachment-button" type="button" disabled aria-label="添加图片或文件" title="添加图片或文件">＋</button>
+            <button id="pasteCopiedFile" class="secondary paste-copied-file" type="button" hidden disabled title="把文件管理器中复制的文件加入当前对话">粘贴文件</button>
+            <div class="composer-font-control" aria-label="调整对话和文本框字号">
+              <button id="fontDecrease" class="font-step-button" type="button" aria-label="缩小字号" title="缩小字号">A−</button>
+              <output id="composerFontSize" aria-live="polite">13</output>
+              <button id="fontIncrease" class="font-step-button" type="button" aria-label="放大字号" title="放大字号">A+</button>
+            </div>
+            <span id="messageHint">可拖入或粘贴文件 · Enter 发送 · Shift + Enter 换行</span>
+          </div>
+          <div class="composer-buttons">
+              <span id="nativeRetryStatus" class="native-retry-status" role="status" hidden></span>
+            <button id="attachThread" class="secondary" type="button" hidden>接入原会话</button>
+            <button id="stopTurn" class="secondary stop-turn" type="button" hidden>停止</button>
+            <button id="send" type="submit" disabled>发送 ↑</button>
+          </div>
+        </div>
+      </form>
+      <div id="sendResult" role="status"></div>
+    </div>
+  </main>
+
+  <div id="terminalResizer" class="pane-resizer vertical terminal-resizer" role="separator" aria-label="调整终端栏宽度" aria-orientation="vertical" tabindex="0" hidden></div>
+  <section id="terminalPanel" aria-label="远程终端" hidden>
+    <div class="terminal-header">
+      <div>
+        <strong id="terminalPanelTitle">SSH 终端</strong>
+        <span id="terminalHostHint">服务器 直接通过 SSH 连接目标电脑</span>
+      </div>
+      <div class="terminal-header-actions">
+        <select id="terminalHostSelect" aria-label="选择 SSH 终端电脑"></select>
+        <button id="newTerminal" class="secondary" type="button" title="新建 SSH 终端">＋ 新终端</button>
+        <button id="terminalPanelClose" class="quiet" type="button" aria-label="收起终端栏" title="收起终端栏">×</button>
+      </div>
+    </div>
+    <div class="terminal-mode-tabs" role="tablist" aria-label="终端与文件">
+      <button id="terminalModeTerminal" type="button" role="tab" aria-selected="true">终端</button>
+      <button id="terminalModeFiles" type="button" role="tab" aria-selected="false">文件</button>
+      <button id="terminalModeAgents" type="button" role="tab" aria-selected="false">子智能体</button>
+    </div>
+    <div id="subagentPanel" hidden>
+      <div class="subagent-toolbar">
+        <label for="subagentScope">显示范围</label>
+        <select id="subagentScope"><option value="current">当前对话</option><option value="all">本机全部</option></select>
+        <span id="subagentCount" role="status"></span>
+      </div>
+      <div id="subagentRows" class="subagent-rows"></div>
+    </div>
+    <div id="terminalTabs" role="tablist" aria-label="终端会话"></div>
+    <div id="terminalStack">
+      <div id="terminalEmpty">
+        <div>›_</div>
+        <p>选择电脑并启动 SSH 终端</p>
+        <button id="terminalEmptyCreate" type="button">新建 SSH 终端</button>
+      </div>
+    </div>
+    <div id="terminalStatus" role="status">所有电脑的 SSH 终端会显示在同一组标签中</div>
+    <div id="fileBrowser" hidden>
+      <form id="filePathForm" class="file-path-form">
+        <input id="filePath" aria-label="目标机文件路径" placeholder="输入目标机文件夹路径" autocomplete="off" spellcheck="false">
+        <button type="submit">前往</button>
+      </form>
+      <div class="file-browser-toolbar">
+        <button id="fileTreeToggle" class="secondary" type="button" aria-expanded="true" aria-controls="fileTreePanel">目录索引</button>
+        <button id="fileGoParent" class="secondary" type="button">↑ 上一级</button>
+        <button id="fileRefresh" class="secondary" type="button">刷新</button>
+        <span id="fileBrowserStatus" role="status"></span>
+      </div>
+      <div class="file-explorer-layout">
+        <div id="fileTreePanel" class="file-tree-panel" aria-label="目录索引">
+          <div class="file-tree-heading"><strong>目录索引</strong><button id="fileTreeRefresh" class="quiet" type="button" title="刷新目录索引" aria-label="刷新目录索引">↻</button></div>
+          <div id="fileTreeRows" class="file-tree-rows" role="tree" aria-label="电脑文件夹目录树"></div>
+          <div id="fileTreeStatus" class="file-tree-status" role="status"></div>
+        </div>
+        <div id="fileListPanel" class="file-list-panel">
+          <div id="fileRows" class="file-rows" role="group" aria-label="文件与文件夹"></div>
+          <button id="fileLoadMore" class="secondary file-load-more" type="button" hidden>显示更多文件</button>
+        </div>
+      </div>
+    </div>
+  </section>
+</div>
+
+<div id="terminalContextMenu" class="terminal-context-menu" role="dialog" aria-label="终端操作" hidden>
+  <button id="terminalCopySelection" type="button">复制选中内容</button>
+  <button id="terminalCopyLine" type="button">复制当前行</button>
+  <button id="terminalPaste" type="button">粘贴</button>
+  <button id="terminalSelectAll" type="button">全选输出</button>
+  <div id="terminalPasteBox" class="terminal-context-box" hidden>
+    <p>浏览器不能直接读取剪贴板。请在下方输入框长按粘贴，或按 Ctrl/⌘+V。</p>
+    <textarea id="terminalPasteText" rows="3" aria-label="要粘贴到终端的内容" placeholder="在这里粘贴内容"></textarea>
+    <button id="terminalPasteSend" type="button">发送到终端</button>
+  </div>
+  <div id="terminalCopyBox" class="terminal-context-box" hidden>
+    <p>浏览器未允许自动复制。请选中下方文字，使用系统复制菜单。</p>
+    <textarea id="terminalCopyText" rows="3" aria-label="待复制的终端内容" readonly></textarea>
+  </div>
+</div>
+
+<div id="fileContextMenu" class="file-context-menu" role="menu" aria-label="文件操作" hidden>
+  <div id="fileContextTarget" class="file-context-target"></div>
+  <button id="fileNewFolder" type="button" role="menuitem">新建文件夹</button>
+  <button id="fileNewFile" type="button" role="menuitem">新建文件</button>
+  <button id="fileCopy" type="button" role="menuitem">复制</button>
+  <button id="filePaste" type="button" role="menuitem">粘贴</button>
+  <button id="fileDelete" class="danger" type="button" role="menuitem">永久删除…</button>
+</div>
+
+<div id="threadContextMenu" class="thread-context-menu" role="menu" aria-label="对话操作" hidden>
+  <div id="threadContextTarget" class="file-context-target"></div>
+  <button id="refreshThreadMenu" type="button" role="menuitem">刷新对话</button>
+  <button id="workspaceThreadOrigin" type="button" role="menuitem" hidden>转到原位置</button>
+  <button id="workspaceThreadToggle" type="button" role="menuitem">添加到工作区</button>
+  <button id="workspaceThreadUp" type="button" role="menuitem" hidden>上移</button>
+  <button id="workspaceThreadDown" type="button" role="menuitem" hidden>下移</button>
+  <button id="renameThread" type="button" role="menuitem">重命名</button>
+  <label for="moveProject">移至项目</label>
+  <select id="moveProject" aria-label="移动对话到项目"></select>
+  <button id="archive" type="button" role="menuitem">归档</button>
+  <div class="thread-context-divider">复制</div>
+  <button id="copyThreadCwd" type="button" role="menuitem">复制工作目录</button>
+  <button id="copyThreadLink" type="button" role="menuitem">复制深层链接</button>
+  <button id="copyThreadMarkdown" type="button" role="menuitem">复制对话为 Markdown</button>
+</div>
+
+<div id="projectContextMenu" class="thread-context-menu" role="menu" aria-label="项目操作" hidden>
+  <div id="projectContextTarget" class="file-context-target"></div>
+  <button id="projectMenuNewThread" type="button" role="menuitem">在此项目新建对话</button>
+  <button id="projectMenuDirectories" type="button" role="menuitem">查看 / 修改项目目录…</button>
+  <button id="projectMenuOpenDirectory" type="button" role="menuitem">打开默认目录</button>
+  <button id="projectMenuRename" type="button" role="menuitem">重命名项目</button>
+  <button id="projectMenuDelete" type="button" role="menuitem">删除项目…</button>
+</div>
+
+<dialog id="threadMarkdownDialog" class="thread-markdown-dialog">
+  <h2>复制对话为 Markdown</h2>
+  <p id="threadMarkdownStatus"></p>
+  <textarea id="threadMarkdownText" readonly aria-label="对话 Markdown 内容"></textarea>
+  <div class="dialog-actions"><button id="threadMarkdownClose" class="secondary" type="button">关闭</button><button id="threadMarkdownCopy" type="button">复制</button></div>
+</dialog>
+
+<dialog id="fileCreateDialog" class="file-operation-dialog" aria-labelledby="fileCreateTitle">
+  <form id="fileCreateForm">
+    <h2 id="fileCreateTitle">新建</h2>
+    <p id="fileCreateLocation"></p>
+    <label for="fileCreateName">名称</label>
+    <input id="fileCreateName" type="text" maxlength="255" autocomplete="off" required>
+    <p id="fileCreateHint"></p>
+    <div id="fileCreateError" class="file-operation-error" role="alert"></div>
+    <div class="dialog-actions">
+      <button id="fileCreateCancel" class="secondary" type="button">取消</button>
+      <button id="fileCreateConfirm" type="submit">新建</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="fileDeleteDialog" class="file-operation-dialog" aria-labelledby="fileDeleteTitle">
+  <form id="fileDeleteForm">
+    <h2 id="fileDeleteTitle">永久删除</h2>
+    <p id="fileDeleteTarget"></p>
+    <p id="fileDeleteWarning"></p>
+    <label id="fileDeleteNameLabel" for="fileDeleteName" hidden>输入文件夹名称以确认</label>
+    <input id="fileDeleteName" type="text" autocomplete="off" hidden>
+    <div id="fileDeleteError" class="file-operation-error" role="alert"></div>
+    <div class="dialog-actions">
+      <button id="fileDeleteCancel" class="secondary" type="button">取消</button>
+      <button id="fileDeleteConfirm" class="danger" type="submit">永久删除</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="filePreviewDialog" class="file-preview-dialog" aria-labelledby="filePreviewTitle">
+  <div class="file-preview-shell">
+    <div class="file-preview-header">
+      <div>
+        <strong id="filePreviewTitle">文件预览</strong>
+        <span id="filePreviewMeta"></span>
+      </div>
+      <div class="file-preview-actions">
+        <label id="filePreviewFontControl" class="file-preview-font" for="filePreviewFontSize" hidden>
+          <span>字号</span>
+          <input id="filePreviewFontSize" type="range" min="5" max="32" step="1" value="13" aria-label="预览字体大小">
+          <output id="filePreviewFontValue" for="filePreviewFontSize">13px</output>
+        </label>
+        <button id="filePreviewDownload" class="secondary" type="button">下载</button>
+        <button id="filePreviewEdit" class="secondary" type="button" hidden>编辑</button>
+        <button id="filePreviewAnnotation" class="secondary" type="button" hidden>批注所选文本</button>
+        <button id="filePreviewAttach" class="secondary" type="button" hidden>加入对话</button>
+        <button id="filePreviewClose" class="quiet" type="button" aria-label="关闭预览">×</button>
+      </div>
+    </div>
+    <div id="filePreviewTabs" class="file-preview-tabs" role="tablist" aria-label="已打开的文件"></div>
+    <div id="filePreviewContent" class="file-preview-content"></div>
+    <div id="filePreviewStatus" class="file-preview-status" role="status"></div>
+  </div>
+</dialog>
+
+<dialog id="fileAttachDialog" class="file-attach-dialog" aria-labelledby="fileAttachTitle">
+  <form id="fileAttachForm" method="dialog">
+    <h2 id="fileAttachTitle">加入到对话</h2>
+    <p id="fileAttachName"></p>
+    <label for="fileAttachThread">目标对话</label>
+    <select id="fileAttachThread" aria-label="目标对话"></select>
+    <div id="fileAttachStatus" role="status"></div>
+    <div class="file-attach-actions">
+      <button id="fileAttachCancel" class="secondary" type="button">取消</button>
+      <button id="fileAttachConfirm" type="submit">加入待发送附件</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="panelRestartDialog" aria-labelledby="panelRestartTitle">
+  <form id="panelRestartForm">
+    <h2 id="panelRestartTitle">重启面板</h2>
+    <p>服务会完整停止后重新启动，不是仅刷新网页。</p>
+    <label><input type="radio" name="panelRestartMode" value="service" checked> 仅重启 服务器 面板服务</label>
+    <label><input type="radio" name="panelRestartMode" value="all"> 重启全部面板组件（含 Windows / Mint / Mac 代理）</label>
+    <p>不会停止 Codex App 或原对话任务。网页 SSH 终端会断开；其他浏览器也会短暂断线。</p>
+    <p>当前网页自动重新接入，未发送草稿和附件保留。离线电脑的代理会单独报告。</p>
+    <p id="panelRestartStatus" role="status"></p>
+    <div class="dialog-actions">
+      <button id="panelRestartCancel" class="secondary" type="button">取消</button>
+      <button id="panelRestartConfirm" type="submit" disabled>确认重启</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="trafficDialog" class="traffic-dialog" aria-labelledby="trafficTitle">
+  <div class="traffic-shell">
+    <div class="traffic-header">
+      <div><h2 id="trafficTitle">流量计算器</h2><p>公网面板经阿里云中继传输的应用数据</p></div>
+      <button id="trafficClose" class="quiet" type="button" aria-label="关闭流量窗口">×</button>
+    </div>
+    <div class="traffic-body">
+      <div class="traffic-cards">
+        <div><span>当前累计</span><strong id="trafficCurrentTotal">—</strong></div>
+        <div><span>上传</span><strong id="trafficCurrentUpload">—</strong></div>
+        <div><span>下载</span><strong id="trafficCurrentDownload">—</strong></div>
+      </div>
+      <div class="traffic-session"><span id="trafficStarted">正在读取…</span><button id="trafficReset" class="secondary" type="button">重置当前值</button></div>
+      <div class="traffic-query">
+        <label>开始时间<input id="trafficFrom" type="datetime-local"></label>
+        <label>结束时间<input id="trafficTo" type="datetime-local"></label>
+        <button id="trafficQuery" type="button">查询历史</button>
+      </div>
+      <div class="traffic-presets"><button type="button" data-days="1">最近 24 小时</button><button type="button" data-days="7">最近 7 天</button><button type="button" data-days="30">最近 30 天</button></div>
+      <div id="trafficHistorySummary" class="traffic-history-summary"></div>
+      <div id="trafficHistoryRows" class="traffic-history-rows"></div>
+      <p class="traffic-note">从启用统计时开始记录；按压缩后请求和响应正文计数，不含 TLS、网络包头及其他服务流量。重置仅清空“当前累计”，历史保留。</p>
+      <div id="trafficError" class="error" role="alert"></div>
+    </div>
+  </div>
+</dialog>
+
+<button id="mobileBackdrop" type="button" aria-label="关闭菜单" hidden></button>
+
+<dialog id="brandDialog">
+  <form id="brandForm">
+    <h2>修改工作台名称</h2>
+    <label for="brandName">名称</label>
+    <input id="brandName" maxlength="40" required autocomplete="off">
+    <div id="brandError" class="error" role="alert"></div>
+    <div class="dialog-actions"><button id="brandCancel" class="secondary" type="button">取消</button><button id="brandSave" type="submit">保存</button></div>
+  </form>
+</dialog>
+
+<dialog id="projectDialog">
+  <form id="projectForm">
+    <h2>在目标电脑添加项目</h2>
+    <p id="projectDeviceHint"></p>
+    <label for="projectName">项目名称</label>
+    <input id="projectName" maxlength="120" required autocomplete="off">
+    <label for="projectPath">项目根目录</label>
+    <input id="projectPath" required autocomplete="off" placeholder="/home/relay/Projects/my-project">
+    <small>填写目标电脑上已存在的绝对目录。</small>
+    <div id="projectError" class="error" role="alert"></div>
+    <div class="dialog-actions"><button id="cancelProject" class="secondary" type="button">取消</button><button id="createProject" type="submit">添加项目</button></div>
+  </form>
+</dialog>
+
+<dialog id="renameProjectDialog">
+  <form id="renameProjectForm">
+    <h2>重命名项目</h2>
+    <p id="renameProjectHint"></p>
+    <label for="renameProjectName">项目名称</label>
+    <input id="renameProjectName" maxlength="120" required autocomplete="off">
+    <div id="renameProjectError" class="error" role="alert"></div>
+    <div class="dialog-actions"><button id="cancelRenameProject" class="secondary" type="button">取消</button><button id="saveRenameProject" type="submit">保存</button></div>
+  </form>
+</dialog>
+
+<dialog id="projectRootsDialog" class="project-roots-dialog" aria-labelledby="projectRootsTitle">
+  <form id="projectRootsForm">
+    <h2 id="projectRootsTitle">项目目录</h2>
+    <p id="projectRootsHint"></p>
+    <p>第一个目录为默认目录。移除只取消项目关联，不删除文件；现有对话的工作目录不变。</p>
+    <div id="projectRootsList" class="project-roots-list"></div>
+    <button id="projectRootsAdd" class="secondary" type="button">＋ 添加目录</button>
+    <div id="projectRootsError" class="error" role="alert"></div>
+    <div class="dialog-actions">
+      <button id="projectRootsCancel" class="secondary" type="button">取消</button>
+      <button id="projectRootsSave" type="submit">保存到 Codex App</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="threadDialog">
+  <form id="threadForm">
+    <h2 id="newThreadTitle">新建 Codex 对话</h2>
+    <p id="threadDeviceHint"></p>
+    <label for="newThreadProject">项目</label>
+    <select id="newThreadProject"></select>
+    <div class="new-thread-settings">
+      <div>
+        <label for="newThreadModel">模型</label>
+        <select id="newThreadModel"></select>
+      </div>
+      <div>
+        <label for="newThreadEffort">推理</label>
+        <select id="newThreadEffort"></select>
+      </div>
+    </div>
+    <label for="newThreadPrompt">任务内容</label>
+    <textarea id="newThreadPrompt" rows="6" maxlength="32000" placeholder="描述你希望 Codex 完成的任务…"></textarea>
+    <div id="newThreadUploadTray" class="upload-tray new-thread-upload-tray" hidden aria-label="新对话附件"></div>
+    <input id="newThreadFileInput" type="file" multiple hidden>
+    <div class="new-thread-attachments">
+      <button id="newThreadAddFile" class="secondary" type="button">＋ 添加文件</button>
+      <button id="newThreadPasteCopied" class="secondary" type="button" hidden>粘贴目标机文件</button>
+      <span>可在消息框粘贴文件，也可拖入此窗口</span>
+    </div>
+    <small>添加附件时会先建立对话，再自动把任务和附件一同发送；对话中会有一条简短的等待消息。</small>
+    <div id="threadError" class="error" role="alert"></div>
+    <div class="dialog-actions"><button id="cancelThread" class="secondary" type="button">取消</button><button id="createThread" type="submit">创建并发送</button></div>
+  </form>
+</dialog>
+
+<dialog id="renameThreadDialog">
+  <form id="renameThreadForm">
+    <h2>重命名对话</h2>
+    <p id="renameThreadHint"></p>
+    <label for="renameThreadName">对话名称</label>
+    <input id="renameThreadName" maxlength="240" required autocomplete="off">
+    <div id="renameThreadError" class="error" role="alert"></div>
+    <div class="dialog-actions"><button id="cancelRenameThread" class="secondary" type="button">取消</button><button id="saveRenameThread" type="submit">保存</button></div>
+  </form>
+</dialog>
+
+<dialog id="codexUpdatesDialog" class="simple-dialog">
+  <section>
+    <div class="software-dialog-header"><h2>Codex App 更新</h2><button id="codexUpdatesClose" class="quiet" type="button" aria-label="关闭软件更新">×</button></div>
+    <div id="codexUpdatesNotice" class="software-notice" role="status" hidden></div>
+    <div id="codexUpdatesError" class="software-error" role="alert" hidden></div>
+    <div id="codexUpdatesBody"><div id="codexUpdateCard" class="software-update" aria-live="polite">
+        <div class="software-update-info">
+          <strong id="codexUpdateStatus">尚未检测 Codex App 更新</strong>
+          <span id="codexUpdateDetails">仅在点击时读取目标机的软件版本。</span>
+        </div>
+        <div class="software-update-actions">
+          <button id="codexCheckUpdates" class="secondary" type="button">检测 Codex 更新</button>
+          <button id="codexStartUpdate" type="button" disabled>刷新软件源、更新并重启</button>
+        </div>
+      </div></div>
+  </section>
+</dialog>
+<dialog id="softwarePasswordDialog" class="simple-dialog">
+  <form id="softwarePasswordForm" method="dialog">
+    <h2 id="softwarePasswordTitle">系统授权</h2>
+    <p id="softwarePasswordHint">密码仅用于这次更新，不会保存在面板中。</p>
+    <label id="softwarePasswordLabel" for="softwarePassword">目标机系统密码</label>
+    <input id="softwarePassword" type="password" autocomplete="off" required>
+    <div id="softwarePasswordError" class="error" role="alert"></div>
+    <div class="dialog-actions">
+      <button id="softwarePasswordCancel" class="secondary" type="button">取消</button>
+      <button id="softwarePasswordSubmit" type="submit">开始更新</button>
+    </div>
+  </form>
+</dialog>
+</body>
+</html>

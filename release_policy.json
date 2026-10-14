@@ -1,0 +1,26 @@
+{
+  "schema": 2,
+  "requestedAt": "2026-10-13",
+  "clientEditions": [
+    "standard"
+  ],
+  "serverEditions": [
+    "standard"
+  ],
+  "labels": {
+    "standard": "普通版"
+  },
+  "platforms": [
+    "Windows-x64",
+    "Linux-x64",
+    "macOS-arm64"
+  ],
+  "sharedNonCockpitSources": true,
+  "synchronizeNonCockpitChanges": true,
+  "packageAllEditionsTogether": true,
+  "credentialsBundled": false,
+  "standardSourceIndependent": true,
+  "standardServerCockpitCompatibility": false,
+  "standardSourceLicense": "PolyForm-Noncommercial-1.0.0",
+  "privateEditionIncluded": false
+}

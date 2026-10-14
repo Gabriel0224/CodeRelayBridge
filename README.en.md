@@ -1,0 +1,58 @@
+# CodeRelayBridge (CRB)
+
+[简体中文](README.md) · [Downloads](https://github.com/Gabriel0224/CodeRelayBridge/releases/latest) · [User guide](docs/USER_GUIDE.en.md)
+
+Use Codex and DeepSeek Harness desktop apps across multiple computers from one browser. Manage projects, continue chats, view execution progress, and access files and terminals from a computer, tablet, or phone.
+
+## Features
+
+- Desktop chat, execution status, questions, and approval synchronization.
+- A shared workspace for conversations across computers and apps.
+- File browsing, previews, editing, and chat attachments.
+- Tabbed terminals and file previews accessible across devices.
+- Message delivery status, explicit retries, and completion notifications.
+- A standalone tray client for launching apps, managing connections, and unpairing.
+- Chinese and English interfaces, themes, and adjustable text size.
+- Signed update manifests, package verification, and rollback.
+
+Available actions depend on the capabilities of each desktop app.
+
+## Downloads and requirements
+
+[Download the latest release](https://github.com/Gabriel0224/CodeRelayBridge/releases/latest)
+
+| Platform | Client | Server |
+| --- | --- | --- |
+| Windows x64 | ZIP | ZIP |
+| Linux x64 (Ubuntu / Mint) | TAR.GZ | TAR.GZ |
+| macOS 27+ Apple Silicon | DMG | DMG |
+
+The client and server are separate applications. Complete packages include Python, Qt, and runtime dependencies; Linux may also require system graphical libraries. Install and sign in to the original Codex or DeepSeek Harness desktop app separately.
+
+This repository provides Standard source and packages. Standard does not require Cockpit; the Cockpit edition is distributed through a separate private repository.
+
+## Quick start
+
+1. Install the server on one computer and a client on each computer you want to connect.
+2. Configure the server's listen address, access URL, and web login, then start it.
+3. Open the URL in a browser and confirm that you can sign in.
+4. Select “Pair / add app” in the client, enter the server URL and web credentials, select the app, and connect.
+5. Choose an app, computer, project, or workspace in the panel and open a chat.
+
+A computer can run both applications. For access across locations, use a private network such as Tailscale or ZeroTier, including the phone when needed. Public Internet access requires separate HTTPS and access-control configuration.
+
+Full instructions: [English user guide](docs/USER_GUIDE.en.md) · [中文使用指南](docs/USER_GUIDE.zh-CN.md)
+
+## Updates and security
+
+Select “Check for CRB updates” in the client or server. After confirmation, the updater verifies the manifest and package, preserves pairing and settings, and restarts Relay. Connections and panel terminals briefly disconnect; the original AI desktop apps are not restarted.
+
+Pairing grants access to the target computer's files, terminal, and applications. Connect only to a trusted server, use HTTPS for public access, and keep credentials and private keys confidential. [Security](SECURITY.md)
+
+## Development and license
+
+[Development and builds](DEVELOPMENT.md) · [Updates](UPDATES.md)
+
+Original project code is available under [PolyForm Noncommercial 1.0.0](LICENSE) for noncommercial use. Third-party components retain their own licenses. See [licensing](LICENSING.md) and [third-party notices](THIRD_PARTY_NOTICES.md).
+
+Author: Gabriel

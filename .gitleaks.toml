@@ -1,0 +1,23 @@
+title = "Relay source secret scanning"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Exact non-secret JavaScript export assignments in the verified xterm vendor file"
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = ['''(^|/)web/vendor/xterm\.js$''']
+regexTarget = "match"
+regexes = [
+  '''t\.FourKeyMap=t\.TwoKeyMap=void''',
+  '''t\.SequencerByKey=t\.Sequencer=t\.Throttler=void'''
+]
+
+[[allowlists]]
+description = "Exact Ed25519 public verification key, not a credential or signing key"
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = ['''(^|/)desktop_client/relay_updates\.py$''']
+regexTarget = "match"
+regexes = ['''VERIFICATION_KEY\s*=\s*'2Jc8cJgnRJQEk9VP7X5IlGM25N0vG\+Bvg/KAedY4cfw=?''']

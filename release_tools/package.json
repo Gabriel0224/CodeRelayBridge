@@ -1,0 +1,8 @@
+{
+  "name": "crb-release-tools",
+  "private": true,
+  "description": "Build-time JavaScript parser for deterministic source selection and UI catalog review",
+  "dependencies": {
+    "acorn": "8.15.0"
+  }
+}
