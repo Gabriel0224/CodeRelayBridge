@@ -234,6 +234,20 @@ class SessionView:
                 values.append({'id': a['attachmentId'], 'name': a.get('name') or '附件', 'label': a.get('name') or '附件', 'kind': 'image' if b['type'] == 'image' else 'file', 'mime': a.get('mediaType') or '', 'size': a.get('bytes', 0)})
         return values
 
+    def native_retry_state(self, events, turn_id):
+        """Project an actual native retry, never retry the model in this bridge."""
+        retry = next((event for event in reversed(events) if event['type'] == 'llm/retry' and (not turn_id or str(event.get('data', {}).get('turn')) == turn_id)), None)
+        if retry is None:
+            return None
+        progress = {'assistant/message', 'tool/call', 'tool/result', 'compaction/start', 'compaction/end', 'turn/end'}
+        if any((event['seq'] > retry['seq'] and event['type'] in progress for event in events)):
+            return None
+        if self.attempt and self.attempt.get('startedAfterSeq', -1) >= retry['seq'] and any((block.get('text') or block.get('arguments') for block in self.blocks.values())):
+            return None
+        data = retry.get('data') or {}
+        started = any((event['seq'] > retry['seq'] and event['type'] == 'llm/retry-started' and (event.get('data', {}).get('retryId') == data.get('retryId')) for event in events))
+        return {**numeric_fields(data, ('retry', 'maxRetries', 'delayMs')), 'started': started}
+
     def public(self, meta):
         items = self.items()
         selection = self.projections.get('modelSelection') or {}
@@ -261,7 +275,10 @@ class SessionView:
             phase = 'completed' if reason == 'completed' else 'forked' if reason == 'forked' else 'interrupted' if reason in ('cancelled', 'canceled', 'aborted', 'interrupted') else 'failed' if reason in ('blocked', 'max-tokens', 'failed', 'error', 'llm-failure') else 'unknown'
         if pending:
             phase = 'waiting_input'
-        return {**meta, 'id': self.sid, 'cwd': self.header.get('cwd', meta.get('cwd', '')), 'model': model_id(chosen) or meta.get('model'), 'reasoningEffort': (chosen or {}).get('reasoningEffort') or meta.get('reasoningEffort'), 'source': 'desktop-live', 'owned': self.connected, 'status': status, 'executionState': {'phase': phase, 'turnId': turn_id or None, 'hasOutput': bool(turn_items)}, 'revision': self.revision, 'items': items, 'totalItems': len(items), 'partialHistory': self.has_more, 'canLoadHistory': True, 'queuedMessages': queued, 'requests': pending, 'pendingRequests': len(pending), 'canContinue': False, 'editableUserMessage': None, 'fullAccess': False, 'permissionPreset': (self.projections.get('permissions') or {}).get('currentValue'), 'turnId': str(last['data']['turn']) if last else None, 'applicationId': APP_ID}
+        retry = self.native_retry_state(events, turn_id) if status == 'active' and (not pending) else None
+        if retry is not None:
+            phase = 'retrying'
+        return {**meta, 'id': self.sid, 'cwd': self.header.get('cwd', meta.get('cwd', '')), 'model': model_id(chosen) or meta.get('model'), 'reasoningEffort': (chosen or {}).get('reasoningEffort') or meta.get('reasoningEffort'), 'source': 'desktop-live', 'owned': self.connected, 'status': status, 'executionState': {'phase': phase, 'turnId': turn_id or None, 'hasOutput': bool(turn_items), **({'retry': retry} if retry is not None else {})}, 'revision': self.revision, 'items': items, 'totalItems': len(items), 'partialHistory': self.has_more, 'canLoadHistory': True, 'queuedMessages': queued, 'requests': pending, 'pendingRequests': len(pending), 'canContinue': False, 'editableUserMessage': None, 'fullAccess': False, 'permissionPreset': (self.projections.get('permissions') or {}).get('currentValue'), 'turnId': str(last['data']['turn']) if last else None, 'applicationId': APP_ID}
 
 class HarnessAgent:
 

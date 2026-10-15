@@ -1139,7 +1139,7 @@ def view_state(state, revision, owner, asset_factory=None, turn_cache=None, capa
     sandbox_policy = latest_settings.get('sandboxPolicy') or current_permissions.get('sandboxPolicy') or {}
     full_access = profile_id == ':danger-full-access' or sandbox_policy.get('type') == 'dangerFullAccess'
     pending = public_pending_requests(state.get('requests', []), recent_items, state['id'])
-    return {'id': state['id'], 'title': state.get('title') or '未命名对话', 'cwd': state.get('cwd', ''), 'model': state.get('latestModel'), 'reasoningEffort': state.get('latestReasoningEffort'), 'fullAccess': full_access, 'nativeMetadata': public_metadata({**state, 'activeTurn': latest_turn}), 'status': status, 'executionState': public_execution_state(state, turns, capacity_retry), 'source': 'desktop-live', 'owned': bool(owner), 'canContinue': status == 'idle' and latest_turn.get('status') == 'interrupted' or bool(capacity_retry and capacity_retry['canContinue']), 'capacityRetry': capacity_retry, 'editableUserMessage': editable, 'revision': revision, 'updated': time.time(), 'items': recent_items, 'asyncQuestionState': {'pendingQuestionIds': [question['questionItemId'] for _, questions in pending_async_questions(state) for question in questions]}, 'totalItems': total_items, 'partialHistory': not history.get('isComplete', True) or len(recent_items) < total_items, 'pendingRequests': len(pending), 'requests': pending}
+    return {'id': state['id'], 'title': state.get('title') or '未命名对话', 'cwd': state.get('cwd', ''), 'model': state.get('latestModel'), 'reasoningEffort': state.get('latestReasoningEffort'), 'fullAccess': full_access, 'nativeMetadata': public_metadata({**state, 'activeTurn': latest_turn}), 'status': status, 'executionState': public_execution_state(state, turns, capacity_retry), 'source': 'desktop-live', 'owned': bool(owner) and status != 'notLoaded', 'canContinue': status == 'idle' and latest_turn.get('status') == 'interrupted' or bool(capacity_retry and capacity_retry['canContinue']), 'capacityRetry': capacity_retry, 'editableUserMessage': editable, 'revision': revision, 'updated': time.time(), 'items': recent_items, 'asyncQuestionState': {'pendingQuestionIds': [question['questionItemId'] for _, questions in pending_async_questions(state) for question in questions]}, 'totalItems': total_items, 'partialHistory': not history.get('isComplete', True) or len(recent_items) < total_items, 'pendingRequests': len(pending), 'requests': pending}
 PENDING_REQUEST_METHODS = {'item/commandExecution/requestApproval', 'item/fileChange/requestApproval', 'item/permissions/requestApproval', 'item/tool/requestUserInput', 'mcpServer/elicitation/request', 'item/plan/requestImplementation'}
 
 def public_pending_requests(requests, items, thread_id):
@@ -2769,6 +2769,32 @@ class HostAgent:
             time.sleep(0.5)
         return {'clientRestarted': False, 'restartWarning': f'{status}并请求启动 Codex，但未检测到新客户端进程'}
 
+    def desktop_thread_owner(self, tid):
+        """Resolve an explicit action's receiver before any mutation is sent.
+
+        Desktop can unload a conversation while retaining its stream snapshot.
+        Only its exact no-client response permits one bounded reattachment. A
+        lookup timeout, other rejection, or submission timeout is never replayed.
+        """
+        try:
+            owner = self.ipc.request('thread-owner-discovery', {'conversationId': tid, 'hostId': 'local'})
+        except RuntimeError as exc:
+            if str(exc) != 'no-client-found':
+                raise
+            with self.lock:
+                slot = self.states.get(tid)
+                if slot:
+                    slot['owner'] = None
+                self.wanted.add(tid)
+                self.followed.discard(tid)
+                self.dirty.add(tid)
+            self.attach_desktop_thread(tid, timeout=15)
+            owner = self.ipc.request('thread-owner-discovery', {'conversationId': tid, 'hostId': 'local'})
+        target = owner.get('handledByClientId')
+        if not isinstance(target, str) or not target:
+            raise RuntimeError('原 App 尚未返回有效的接收客户端；消息未提交，请重新接入')
+        return target
+
     def attach_desktop_thread(self, tid, timeout=75):
         """Start Desktop if needed, open a thread, and wait for its native owner."""
         with self.lock:
@@ -2778,7 +2804,7 @@ class HostAgent:
             if meta.get('archived'):
                 raise RuntimeError('该对话已归档，请先取消归档')
             slot = self.states.get(tid)
-            if slot and slot.get('owner') and self.ipc and self.ipc.connected:
+            if slot and slot.get('owner') and self.ipc and self.ipc.connected and ((slot.get('state', {}).get('threadRuntimeStatus') or {}).get('type') != 'notLoaded'):
                 return {'ok': True, 'transport': 'desktop-ipc', 'alreadyConnected': True, 'confirmedAt': time.time()}
             if slot and slot.get('owner'):
                 slot['owner'] = None
@@ -3315,8 +3341,7 @@ class HostAgent:
                     raise ValueError('该模型不支持所选推理强度')
                 settings = {'model': model, 'effort': effort}
             if self.ipc and self.ipc.connected and state:
-                owner = self.ipc.request('thread-owner-discovery', {'conversationId': tid, 'hostId': 'local'})
-                target = owner['handledByClientId']
+                target = self.desktop_thread_owner(tid)
                 response = self.ipc.request('thread-follower-update-thread-settings', {'conversationId': tid, 'threadSettings': settings, 'activeTurnId': None}, version=2, target=target, timeout=30)
                 transport = 'desktop-ipc'
                 if not response.get('result', {}).get('applied', False):
@@ -3335,8 +3360,9 @@ class HostAgent:
             return result
         if not self.ipc or not self.ipc.connected:
             raise RuntimeError('请先在目标机打开 Codex 桌面 App')
-        owner = self.ipc.request('thread-owner-discovery', {'conversationId': tid, 'hostId': 'local'})
-        target = owner['handledByClientId']
+        target = self.desktop_thread_owner(tid)
+        with self.lock:
+            state = self.states.get(tid, {}).get('state', {})
         if not state:
             raise RuntimeError('请先在桌面 App 打开这条对话，等待网页显示“实时同步”')
         question_ack = None

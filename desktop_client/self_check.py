@@ -71,8 +71,10 @@ def check(role):
         if role == 'client':
             from desktop_client.bridge_runtime import load_core
             codex = load_core('codex')
+            harness = load_core('deepseek')
             assert callable(codex.HostAgent)
-            assert callable(load_core('deepseek').HarnessAgent)
+            assert callable(codex.HostAgent.desktop_thread_owner)
+            assert callable(harness.HarnessAgent)
             sample = {'id': 'health-capacity', 'resumeState': 'resumed', 'turns': [{'turnId': 'health-turn', 'status': 'failed', 'error': {'codexErrorInfo': 'serverOverloaded'}, 'items': []}]}
             for runtime in ('idle', 'systemError', 'active'):
                 sample['threadRuntimeStatus'] = {'type': runtime}
@@ -80,6 +82,13 @@ def check(role):
                 assert projected['canContinue'] and projected['executionState']['phase'] == 'capacity_wait'
             sample['turns'].append({'turnId': 'health-retry', 'status': 'inProgress', 'items': []})
             assert codex.view_state(sample, 2, 'health-owner')['capacityRetry'] is None
+            sample['threadRuntimeStatus'] = {'type': 'notLoaded'}
+            assert not codex.view_state(sample, 3, 'cached-owner')['owned']
+            native = harness.SessionView('health-retry')
+            native.events = {1: {'type': 'turn/start', 'seq': 1, 'time': 1000, 'data': {'turn': 1}}, 2: {'type': 'llm/retry', 'seq': 2, 'time': 1100, 'data': {'turn': 1, 'retry': 1, 'maxRetries': 5, 'delayMs': 500}}}
+            assert native.public({})['executionState']['phase'] == 'retrying'
+            native.events[3] = {'type': 'turn/end', 'seq': 3, 'time': 1200, 'data': {'turn': 1, 'reason': {'kind': 'completed'}}}
+            assert native.public({})['executionState']['phase'] == 'completed'
         else:
             from crb.paths import web_root
             server = importlib.import_module('crb.server.relay')
