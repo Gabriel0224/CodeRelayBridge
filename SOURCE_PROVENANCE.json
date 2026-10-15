@@ -63,8 +63,8 @@
       "exportSha256": "012ffcf6c3299a95546ca5fba618cef59bf25a8d3ea4020d1a5c20b4f22f76a2"
     },
     "crb/codex/agent.py": {
-      "canonicalSha256": "e853423dcc840e90618841f9d4156865500c402f8a7fd5b12fe3a753099a5915",
-      "exportSha256": "34b0b8b321c7791ca750527757feade36ae553eb09c01434207e6e8cd3ddb220"
+      "canonicalSha256": "59ffd34ba846b7364aef0a55e12d277f7759b394320d9cc52650084f574adb83",
+      "exportSha256": "9f6a5e0b9ae42eb7cc1ec64b371ba37f482b1588e08c33919ad0b556b80db548"
     },
     "crb/codex/ipc.py": {
       "canonicalSha256": "e6b4694f4c578f9a83c3b19dbba1c45c448badfa7fcb6e5ddbe28493a15e41c7",
@@ -227,8 +227,8 @@
       "exportSha256": "b3e2d8c42763030deccb2df00f18ca252bec9792098fefcaa4c34300af299a33"
     },
     "desktop_client/__init__.py": {
-      "canonicalSha256": "04b884fae25049c560c822f17747dc76c795007eaf36db715b4c85bac6571450",
-      "exportSha256": "1b17e25c3b9b6c0ec2d50b09691dd2911dc575bb2170e29f8d46e1096c5db513"
+      "canonicalSha256": "6d85550bfcfde13a0ad69adbcc8c71de6c5985f1a5d794fb115cc58a54663bb3",
+      "exportSha256": "776ba78c59f5ee182fbca7ce343ec38e038333a6bf865311f8c5bba77427bdb9"
     },
     "desktop_client/acceptance.py": {
       "canonicalSha256": "89dee34346aa1d650e9aeeb009c77c972108009e2e3a4678c3e5cf00e1fe320c",
@@ -347,8 +347,8 @@
       "exportSha256": "64c78235e744df071d3b3217e817f20353f6462c814b8d9e8c98a1a42a906e88"
     },
     "desktop_client/self_check.py": {
-      "canonicalSha256": "d49925e30f968d29c1dbd294c3c3c8c6176663a3bf995df9034b6d724855b34a",
-      "exportSha256": "82cbb74ab2f5f31c0380aef022484b3e2a86b838d1d8ff4629b86351f7f1e2f1"
+      "canonicalSha256": "2e93b3f18c806b0e737860c2b2a4e89688ff31a275e9aa4014fccad896f96f74",
+      "exportSha256": "dafe6aa0da55975cdb02bff5564e82018907a825de5247443121cefa322aad8c"
     },
     "desktop_client/setup.py": {
       "canonicalSha256": "ca28aa1961616fb2832a60d3d1bf321aa5c8b44e36ed96b3609949e962d561a3",
@@ -503,8 +503,8 @@
       "exportSha256": "267c9bb068825cb6e7e68b6db08412444addec30c0362ff3f61b85fb56b53243"
     },
     "web/app.js": {
-      "canonicalSha256": "26ca6b47bcbbf1136fdb7253dd89874c30e117c72add17576b18af5d2381049b",
-      "exportSha256": "a9273afb3ad297ba6238b1c469365aceea08b6d2ebd866f060dd9a9b42e93db0"
+      "canonicalSha256": "42d3c89be9643aaf7f48999a547dd88eb5493890b3c56fe4264824ff9273bf65",
+      "exportSha256": "a9ae261eca1b88cfb2f4b9e900aade467370f8b7ce2a04bc9e81ea83bca4adc9"
     },
     "web/i18n-catalog.js": {
       "canonicalSha256": "f4c0eddbe538ac7f13da166c889ae304f56f895d0995793dbf54f03df4c6e2a3",

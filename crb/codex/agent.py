@@ -1042,7 +1042,8 @@ def native_capacity_retry(state, turns=None, observation=None):
     code = error.get('codexErrorInfo', error.get('codex_error_info')) if isinstance(error, dict) else None
     message = error.get('message', '') if isinstance(error, dict) else str(error)
     capacity = code in ('serverOverloaded', 'server_overloaded') or (isinstance(message, str) and 'selected model is at capacity' in message.lower())
-    if not capacity or turn.get('status') != 'failed' or (state.get('threadRuntimeStatus') or {}).get('type') != 'idle':
+    runtime = (state.get('threadRuntimeStatus') or {}).get('type')
+    if not capacity or turn.get('status') != 'failed' or runtime not in ('idle', 'active', 'systemError'):
         return None
     turn_id = turn.get('turnId') or turn.get('id')
     if not turn_id:
@@ -3391,7 +3392,8 @@ class HostAgent:
             turns = state_turns(state)
             capacity = native_capacity_retry(state, turns, self.capacity_retry_observations.get(tid))
             expected_turn = payload.get('turnId')
-            if state.get('threadRuntimeStatus', {}).get('type') != 'idle' or not turns or (turns[-1].get('status') != 'interrupted' and (not (capacity and capacity['canContinue']))) or (expected_turn and expected_turn != (turns[-1].get('turnId') or turns[-1].get('id'))):
+            interrupted = state.get('threadRuntimeStatus', {}).get('type') == 'idle' and bool(turns) and (turns[-1].get('status') == 'interrupted')
+            if not (interrupted or (capacity and capacity['canContinue'])) or (expected_turn and expected_turn != (turns[-1].get('turnId') or turns[-1].get('id'))):
                 raise RuntimeError('当前没有可继续的已停止任务，请刷新面板')
             response = self.ipc.request('thread-follower-start-turn', {'conversationId': tid, 'turnStart': {'request': {'threadId': tid, 'input': [], 'turnTrigger': 'capacity_retry_manual' if capacity else 'resume_interrupted_task'}, 'context': {'inheritThreadSettings': True}}}, version=2, target=target, timeout=45)
             if response.get('result', {}).get('ok') is False:

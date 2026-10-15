@@ -744,9 +744,11 @@ function renderUploadTray() {
 function syncSendButton() {
   const hasInput = Boolean($('message').value.trim() || pendingFiles.length);
   const running = current?.status === 'active';
-  $('send').textContent = current?.capacityRetry?.pending && !hasInput ? '正在重试…' : running ? '加入队列 ↑' :
+  const capacity = current?.capacityRetry;
+  const capacityContinue = capacity && supportsAction(currentHost(), 'continue_turn') && !hasInput;
+  $('send').textContent = capacity?.pending ? '正在重试…' : capacityContinue ? '继续 ↗' : running ? '加入队列 ↑' :
     current?.canContinue && supportsAction(currentHost(), 'continue_turn') && !hasInput ? '继续 ↗' : '发送 ↑';
-  if (current?.capacityRetry?.pending) $('send').disabled = true;
+  if (capacity?.pending || (capacityContinue && !current?.canContinue)) $('send').disabled = true;
   syncCapacityRetryStatus();
 }
 
@@ -3644,7 +3646,7 @@ function renderAsyncQuestions(container, item, state) {
   };
 }
 
-function messageTimestamp(item) {
+function messageDate(item) {
   const value = item.timestamp ?? item.scheduledAt;
   let date = null;
   if (value !== null && value !== undefined && value !== '') {
@@ -3652,6 +3654,11 @@ function messageTimestamp(item) {
     date = new Date(numeric ? Number(value) * (Number(value) < 1e11 ? 1000 : 1) : value);
     if (!Number.isFinite(date.getTime()) || date.getFullYear() < 2000 || date.getFullYear() >= 2100) date = null;
   }
+  return date;
+}
+
+function messageTimestamp(item) {
+  const date = messageDate(item);
   const label = document.createElement('time');
   label.className = 'message-timestamp';
   if (!date) {
@@ -4208,7 +4215,9 @@ function pruneOutgoingStore(store, scope) {
 
 function persistOutgoingRecord(record) {
   const scope = record.journalScope;
-  if (!scope || scope !== outgoingScope) return Promise.resolve(false);
+  // The native echo can resolve the send promise before its broker poll ends.
+  // Once reconciled, a late finally/receipt must never recreate this journal.
+  if (record.reconciled || !scope || scope !== outgoingScope) return Promise.resolve(false);
   const uploadedAll = record.uploadedAttachments.length >= record.originalFiles.length;
   const row = {version: 1, scope, journalKey: `${scope}:${record.item.id}`, updatedAt: Date.now(),
     revision: record.journalRevision = (record.journalRevision || 0) + 1,
@@ -4216,8 +4225,9 @@ function persistOutgoingRecord(record) {
     originalText: record.originalText, originalFiles: uploadedAll ? [] : [...record.originalFiles],
     uploadedAttachments: [...record.uploadedAttachments], sendRequested: record.sendRequested,
     nativeReceipt: record.nativeReceipt ? {ok: true, queued: Boolean(record.nativeReceipt.queued),
-      turnId: record.nativeReceipt.turnId, itemId: record.nativeReceipt.itemId} : null,
+      ...outgoingNativeIdentity(record)} : null,
     known: [...record.known].slice(-1500), associatedNativeKey: record.associatedNativeKey,
+    afterNativeKey: record.afterNativeKey || '',
     item: {...record.item, localInFlight: false}, missingFiles: false};
   let backupSaved = false;
   try {
@@ -4243,6 +4253,7 @@ function persistOutgoingRecord(record) {
 }
 
 function removeOutgoingRecord(record) {
+  record.reconciled = true;
   const scope = record.journalScope;
   if (!scope) return;
   const key = `${scope}:${record.item.id}`;
@@ -4332,6 +4343,7 @@ function beginLocalOutgoing(target, commandId, text, files) {
     confirmation, confirm, nativeReceipt: null, originalText: text, originalFiles: [...files],
     uploadedAttachments: [], sendRequested: false, inFlight: false,
     known: new Set(knownItems.map(itemKey)),
+    afterNativeKey: knownItems.length ? itemKey(knownItems.at(-1)) : '',
     item: {id: `local-send-${commandId}`, type: 'userMessage', text: text.trim(),
       timestamp: Date.now(),
       localDelivery: files.length ? 'preparing' : 'sending',
@@ -4382,6 +4394,14 @@ function confirmLocalOutgoing(target, record, receipt) {
   // restore a stale composer-level failure banner.
 }
 
+function outgoingNativeIdentity(record) {
+  const receipt = record.nativeReceipt;
+  const native = receipt?.nativeReceipt;
+  return {turnId: native?.turnId || receipt?.turnId,
+    itemId: native?.itemId || receipt?.itemId,
+    clientUserMessageId: native?.clientUserMessageId || receipt?.clientUserMessageId};
+}
+
 function messageDeliveryFooter(item) {
   const target = {...selected};
   const outgoing = (localOutgoingMessages.get(historyKey(target)) || [])
@@ -4428,6 +4448,10 @@ function reconcileLocalOutgoing(target, thread) {
     item.type === 'steeringUserMessage' && item.status === 'accepted');
   const claimed = new Set();
   const remaining = records.filter(record => {
+    const identity = outgoingNativeIdentity(record);
+    const matchesIdentity = item => record.attemptIds.has(item.id) ||
+      record.attemptIds.has(item.clientUserMessageId) || Boolean(identity.turnId && identity.itemId &&
+        item.turnId === identity.turnId && item.id === identity.itemId);
     const queued = live && (thread.queuedMessages || []).find(message =>
       record.attemptIds.has(message.id) || record.attemptIds.has(message.clientUserMessageId));
     if (queued) {
@@ -4437,7 +4461,7 @@ function reconcileLocalOutgoing(target, thread) {
       return false;
     }
     const exactMatch = users.find(item => !claimed.has(itemKey(item)) &&
-      (record.attemptIds.has(item.id) || record.attemptIds.has(item.clientUserMessageId)));
+      matchesIdentity(item));
     const match = exactMatch || (live && (thread.items || []).filter(item => item.type === 'userMessage' ||
       item.type === 'steeringUserMessage' && item.status === 'accepted').find(item => {
       const nativeKey = itemKey(item);
@@ -4452,10 +4476,10 @@ function reconcileLocalOutgoing(target, thread) {
          record.item.localAttachmentNames.every(name => String(item.text || '').includes(name)));
     }));
     if (!match) return true;
-    const exactIdentity = record.attemptIds.has(match.id) || record.attemptIds.has(match.clientUserMessageId);
+    const exactIdentity = matchesIdentity(match);
     if (exactIdentity) {
       confirmLocalOutgoing(target, record, {ok: true, transport: 'desktop-live-echo',
-        clientUserMessageId: record.commandId, turnId: match.turnId});
+        clientUserMessageId: record.commandId, turnId: match.turnId, itemId: match.id});
     }
     const nativeKey = itemKey(match);
     claimed.add(nativeKey);
@@ -4513,8 +4537,41 @@ function combinedHistoryItems(thread) {
       localError: receipt.item.localError, localProgress: receipt.item.localProgress,
       localInFlight: receipt.item.localInFlight};
   });
-  combined.push(...local.filter(record => !projected.has(record)).map(record => record.item));
-  return combined.map(visibleScheduledItem).filter(Boolean);
+  return placeOutgoingItems(combined, local.filter(record => !projected.has(record)))
+    .map(visibleScheduledItem).filter(Boolean);
+}
+
+function placeOutgoingItems(native, records) {
+  if (!records.length) return native;
+  // Keep the native sequence as the chronology spine. Do not globally sort its
+  // approximate timestamps or split a command/question/reply segment apart.
+  const segments = timelineSegments(native);
+  const anchorEnds = new Map();
+  let offset = 0;
+  const boundaries = segments.map(segment => {
+    const start = offset;
+    offset += segment.items.length;
+    for (const item of segment.items) anchorEnds.set(itemKey(item), offset);
+    const user = segment.items.find(item => ['userMessage', 'steeringUserMessage'].includes(item.type));
+    const date = user ? messageDate(user) : segment.items.map(messageDate).find(Boolean);
+    return {start, time: date?.getTime()};
+  });
+  const buckets = new Map();
+  for (const record of records) {
+    const after = anchorEnds.get(record.afterNativeKey);
+    const time = messageDate(record.item)?.getTime();
+    const next = Number.isFinite(time) ? boundaries.find(boundary =>
+      boundary.start >= (after ?? 0) && boundary.time > time) : null;
+    const index = next?.start ?? native.length;
+    if (!buckets.has(index)) buckets.set(index, []);
+    buckets.get(index).push(record.item);
+  }
+  for (const items of buckets.values()) items.sort((a, b) => {
+    const left = messageDate(a)?.getTime(), right = messageDate(b)?.getTime();
+    return Number.isFinite(left) && Number.isFinite(right) ? left - right : 0;
+  });
+  return native.flatMap((item, index) => [...(buckets.get(index) || []), item])
+    .concat(buckets.get(native.length) || []);
 }
 
 function timelineNearBottom(distance = 150) {
@@ -5058,7 +5115,7 @@ function renderNativeThreadStatus(meta, thread, host, online) {
   const live = online && thread.owned && thread.source === 'desktop-live' && !meta.archived;
   const nativeStatus = thread.status || meta.status || 'notLoaded';
   const nativeUnread = meta.unread ?? thread.unread;
-  const running = nativeStatus === 'active';
+  const running = nativeStatus === 'active' && !thread.capacityRetry;
   const desktopConnected = Boolean(host?.desktopConnected && online);
   const pendingRequests = thread.pendingRequests ?? meta.pendingRequests ?? 0;
   const phase = nativeExecutionFeedback(thread).phase;

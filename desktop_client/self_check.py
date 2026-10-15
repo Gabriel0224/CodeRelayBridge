@@ -70,8 +70,16 @@ def check(role):
     def role_payload():
         if role == 'client':
             from desktop_client.bridge_runtime import load_core
-            assert callable(load_core('codex').HostAgent)
+            codex = load_core('codex')
+            assert callable(codex.HostAgent)
             assert callable(load_core('deepseek').HarnessAgent)
+            sample = {'id': 'health-capacity', 'resumeState': 'resumed', 'turns': [{'turnId': 'health-turn', 'status': 'failed', 'error': {'codexErrorInfo': 'serverOverloaded'}, 'items': []}]}
+            for runtime in ('idle', 'systemError', 'active'):
+                sample['threadRuntimeStatus'] = {'type': runtime}
+                projected = codex.view_state(sample, 1, 'health-owner')
+                assert projected['canContinue'] and projected['executionState']['phase'] == 'capacity_wait'
+            sample['turns'].append({'turnId': 'health-retry', 'status': 'inProgress', 'items': []})
+            assert codex.view_state(sample, 2, 'health-owner')['capacityRetry'] is None
         else:
             from crb.paths import web_root
             server = importlib.import_module('crb.server.relay')
