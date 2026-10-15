@@ -45,6 +45,8 @@ Full instructions: [English user guide](docs/USER_GUIDE.en.md) · [中文使用�
 
 ## Using Tailscale with v2rayN
 
+**Turning TUN off does not guarantee unaffected access.** A system proxy, PAC script, or browser-specific proxy can still make the panel unreachable or slow. Without TUN, Tailscale process exceptions are usually unnecessary, but the panel's actual Tailscale IP/MagicDNS name still needs a proxy exception. With PAC or a separate proxy, verify direct routing in that configuration too.
+
 If enabling v2rayN makes the panel unreachable or slow, distinguish system proxy settings from TUN interception. Add the actual server IP/MagicDNS name to proxy exceptions; for TUN, exclude Tailscale address ranges and check the Windows `tailscaled.exe` service's direct-routing rule. Exempting only the tray or CLI is not the same as exempting the service. Do not force the entire browser or Codex app to connect directly.
 
 See the [coexistence setup](docs/USER_GUIDE.en.md#71-using-tailscale-with-v2rayn) for fields, IPv4/IPv6 ranges, DNS, and verification.

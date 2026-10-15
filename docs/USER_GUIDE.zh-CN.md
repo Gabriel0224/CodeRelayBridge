@@ -123,6 +123,8 @@ MagicDNS 名称可以用于网页地址，但如果使用 HTTP 名称地址配�
 
 #### 仅使用系统代理，未开启 TUN
 
+**未开启 TUN 不等于完全不受影响。** 系统代理、PAC 或浏览器独立代理仍可能把面板请求送到代理服务器，导致打不开或变慢。非 TUN 模式通常不争抢 Tailscale 路由，也通常无需为此添加 `tailscaled.exe` 进程规则；优先核对面板实际 Tailscale IP／MagicDNS 名称的代理例外。若使用 PAC 或应用内独立代理，还需在那套配置中确认这些目标直连，不能只修改系统代理例外。
+
 在 v2rayN **“设置 → 参数设置 → 代理配置设置 → 例外”**中，保留原有条目，追加 CRB 服务端**实际的 Tailscale IPv4**；使用 MagicDNS 时，再追加实际完整主机名。多个条目按该输入框要求用逗号隔开，保留 `localhost`、`127.0.0.1` 等本机例外。此处是主机名／地址例外，**不要把下面的 CIDR 网段直接粘贴进来**；应用自己的代理设置也需单独核对。[v2rayN 系统代理说明](https://github.com/2dust/v2rayN/wiki/Description-of-system-proxy-routing)
 
 #### 开启 TUN 时：网段和进程是两件事

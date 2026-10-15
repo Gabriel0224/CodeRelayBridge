@@ -45,6 +45,8 @@
 
 ## 同时使用 Tailscale 与 v2rayN
 
+**未开启 TUN 不等于完全没有影响。** 系统代理、PAC 或浏览器独立代理仍可能使面板访问失败或变慢。非 TUN 模式通常无需添加 Tailscale 进程直连规则，但仍要为面板实际使用的 Tailscale IP／MagicDNS 名称设置代理例外；使用 PAC 或独立代理时，需在对应规则中确认直连。
+
 开启 v2rayN 后面板连不上或明显变慢时，先区分系统代理和 TUN：系统代理需为服务端实际 IP／MagicDNS 名称设置例外；TUN 还应排除 Tailscale 网段，并检查 Windows 后台服务 `tailscaled.exe` 的直连规则。仅添加托盘或命令行进程不等于排除后台服务，也不要把整个浏览器或 Codex 强制直连。
 
 具体填写位置、IPv4／IPv6 网段、DNS 与验证步骤见[共存配置说明](docs/USER_GUIDE.zh-CN.md#71-同时使用-tailscale-与-v2rayn)。

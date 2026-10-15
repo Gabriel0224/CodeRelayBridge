@@ -131,6 +131,8 @@ These recommendations cover desktop access to CRB over **private Tailscale addre
 
 #### System proxy only, without TUN
 
+**Turning TUN off does not guarantee unaffected access.** System proxy settings, PAC scripts, or a browser-specific proxy can still send panel requests to a proxy server, causing failures or delays. Without TUN, the proxy usually does not compete with Tailscale routes and normally needs no `tailscaled.exe` process rule. First check exceptions for the panel's actual Tailscale IP/MagicDNS name. If PAC or an application-specific proxy is used, confirm direct access in that configuration as well; changing OS proxy exceptions alone may not apply.
+
 In v2rayN's **Settings → Parameter settings → Proxy settings → Exceptions**, preserve existing entries and append the server's **actual Tailscale IPv4**, plus its actual full MagicDNS hostname if used. Follow the field's comma-separated format and retain loopback exceptions such as `localhost` and `127.0.0.1`. This is a host/address exception list: **do not paste the CIDR ranges below into it**. Check application-specific proxy settings separately. [System proxy behavior](https://github.com/2dust/v2rayN/wiki/Description-of-system-proxy-routing)
 
 #### With TUN: destination exclusions and process rules differ
