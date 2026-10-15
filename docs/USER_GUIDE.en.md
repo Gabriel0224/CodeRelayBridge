@@ -127,31 +127,45 @@ MagicDNS can identify a server. If enrollment rejects an HTTP hostname URL, use 
 
 ### 7.1 Using Tailscale with v2rayN
 
-These recommendations cover desktop access to CRB over **private Tailscale addresses**, not every proxy topology. Back up v2rayN configuration first; labels and process-matching support vary by version/core. Tailscale documents possible route, firewall, and address conflicts between VPNs. [Compatibility](https://tailscale.com/docs/reference/faq/other-vpns)
+These steps target **Windows + v2rayN + private Tailscale access**. Menu names may vary. With TUN off, follow **A → C**; if you need TUN, follow **A → B → C**.
 
-#### System proxy only, without TUN
+Before starting, back up v2rayN configuration. Confirm Tailscale is online and this setup is not using an exit node. Record the server's actual Tailscale IP, port (default `8799`), and optional full MagicDNS name. These private-address rules do not apply to a separate public HTTPS endpoint.
 
-**Turning TUN off does not guarantee unaffected access.** System proxy settings, PAC scripts, or a browser-specific proxy can still send panel requests to a proxy server, causing failures or delays. Without TUN, the proxy usually does not compete with Tailscale routes and normally needs no `tailscaled.exe` process rule. First check exceptions for the panel's actual Tailscale IP/MagicDNS name. If PAC or an application-specific proxy is used, confirm direct access in that configuration as well; changing OS proxy exceptions alone may not apply.
+#### A. Configure proxy exceptions (check even without TUN)
 
-In v2rayN's **Settings → Parameter settings → Proxy settings → Exceptions**, preserve existing entries and append the server's **actual Tailscale IPv4**, plus its actual full MagicDNS hostname if used. Follow the field's comma-separated format and retain loopback exceptions such as `localhost` and `127.0.0.1`. This is a host/address exception list: **do not paste the CIDR ranges below into it**. Check application-specific proxy settings separately. [System proxy behavior](https://github.com/2dust/v2rayN/wiki/Description-of-system-proxy-routing)
+**Turning TUN off does not guarantee unaffected access.** Start with the panel's proxy settings:
 
-#### With TUN: destination exclusions and process rules differ
+1. Open v2rayN **Settings → Parameter settings → Proxy settings → Exceptions**.
+2. Keep existing entries. Append the server's **actual Tailscale IP**, comma-separated; append the actual full MagicDNS hostname if used.
+3. Enter only the IP/hostname, not `http://`, a port, path, or CIDR range. Retain existing loopback exceptions such as `localhost` and `127.0.0.1`.
+4. Save and reapply your original system proxy mode. With PAC or a browser proxy extension, set the same destinations to DIRECT in that configuration too; OS exceptions alone may not apply.
+5. **TUN off**: keep it off and go to C. Tailscale process rules are normally unnecessary. **TUN on**: continue to B.
 
-1. Append `100.64.0.0/10,fd7a:115c:a1e0::/48` to **TUN settings → Route exclusion addresses**, retaining existing entries. Exclude any actual destination subnets advertised by your Tailscale subnet routers too. Do not blindly exclude every private network or treat every `100.*` address as Tailscale.
-2. In the active core routing rules, send those IP ranges to **`direct`**, before the catch-all proxy rule. A core's direct outbound is **not an OS-level TUN route exclusion**; neither substitutes for the other. A preset for local/China traffic need not cover Tailscale.
-3. If TUN still intercepts Tailscale's own Internet connections, add a separate **Routing settings → Rule details** entry: **process name `tailscaled.exe`, outbound `direct`**, before catch-all rules. This is the Windows networking service; the CLI `tailscale.exe` and GUI `tailscale-ipn.exe` do not replace it. Add those separately only if their login/UI traffic needs an exception. Keep process and IP conditions in separate rules, reload the core, and confirm matches in logs rather than assuming identical support across cores.
+#### B. Exclude TUN interception (only with TUN enabled)
 
-The process rule protects Tailscale's outer peer/relay connections; address exclusions protect traffic into the tailnet. Linux normally uses `tailscaled`; macOS GUI builds use a network extension, not the Windows executable name. Do not force all traffic from CRB, your browser, or Codex to direct: their public Internet access may still need a proxy. [Daemon identities](https://tailscale.com/docs/reference/tailscaled) · [Fields and rule order](https://github.com/2dust/v2rayN/wiki/Description-of-some-ui) · [Custom routing format](https://github.com/2dust/v2rayN/wiki/Description-of-custom-routing-rules)
+1. Open **TUN settings → Route exclusion addresses**.
+2. Keep existing entries and append this value. If using Tailscale subnet routes, also append the actual advertised destination subnets:
 
-#### DNS, exit nodes, and mobile devices
+   ```text
+   100.64.0.0/10,fd7a:115c:a1e0::/48
+   ```
 
-- If the IP works but MagicDNS fails, keep private-name resolution with the system/Tailscale resolver instead of remote proxy DNS or FakeIP. A domain direct rule alone does not establish correct DNS routing. Test the actual IP to isolate the issue. [MagicDNS](https://tailscale.com/docs/features/magicdns)
-- Do not also use a Tailscale **exit node** for this setup. Combining two full tunnels requires a separate design, not these instructions. [Limitations](https://tailscale.com/docs/reference/faq/other-vpns)
-- Normal iPhone/iPad/Android VPN modes generally allow only one active VPN. Starting another proxy VPN may disconnect Tailscale; desktop process rules cannot fix that. Distinguish private tailnet access from a separately configured public HTTPS endpoint. Do not disable firewalls or certificate validation.
+3. Save, reload v2rayN's TUN/core, and verify using C. **If login works and the bridge is online, stop here; no additional rules are needed.**
+4. If problems remain, open **Routing settings** and add two **separate** rules to the currently used rule set:
 
-#### Verify actual connectivity
+   | Rule | Field | Value | Outbound |
+   | --- | --- | --- | --- |
+   | Tailscale destinations | IP | The two CIDR ranges above, entered separately as required by the editor | `direct` |
+   | Tailscale service | Process name | `tailscaled.exe` | `direct` |
 
-Replace the placeholder with your server's Tailscale IP. Keep Tailscale online; run the same checks with v2rayN TUN off and then on:
+5. Move both rules before the catch-all proxy rule, confirm they are enabled and the rule set is selected, then save and reload the core. Do not combine IP and process fields in one rule.
+6. Repeat C and check v2rayN logs for direct-rule matches. If the core cannot match processes, a saved rule does not prove success; disable TUN to recover access, then consult that core's documentation.
+
+#### C. Verify the result
+
+1. Confirm Tailscale remains online. For path B, also confirm TUN is enabled again.
+2. Open the original panel URL in a browser. Verify login, a target conversation, and the target computer's bridge status.
+3. If access still fails, run these PowerShell checks, replacing `SERVER_TAILSCALE_IP` and the port with your values:
 
 ```powershell
 tailscale status
@@ -160,7 +174,19 @@ Test-NetConnection SERVER_TAILSCALE_IP -Port 8799
 curl.exe --noproxy "*" --max-time 10 http://SERVER_TAILSCALE_IP:8799/
 ```
 
-`--noproxy` bypasses HTTP proxying for this request, **not TUN**. Confirm the real TCP port, browser login, and CRB bridge. TUN can synthesize ICMP replies, so an ordinary ping alone is insufficient. HTTP 401/login redirects show reachability, not authentication. HTTPS still needs a valid certificate; do not use `-k`. [TUN/ICMP behavior](https://github.com/2dust/v2rayN/wiki/Description-of-some-ui)
+Success means the real TCP port is reachable, browser login works, and the bridge recovers, not merely that ping succeeds. `--noproxy` bypasses HTTP proxying, not TUN. HTTP 401/login redirects show reachability only; do not use `-k` to bypass HTTPS certificate validation.
+
+<details>
+<summary>If problems remain: DNS, process identities, and mobile limits</summary>
+
+- **IP works, hostname fails**: check that system/Tailscale DNS handles MagicDNS rather than remote proxy DNS or FakeIP. Domain direct rules do not replace correct DNS routing.
+- **Tailscale itself goes offline**: Windows networking uses `tailscaled.exe`, not the CLI `tailscale.exe` or GUI `tailscale-ipn.exe`. Linux usually uses `tailscaled`; macOS GUI builds use a network extension, not the Windows name.
+- **Different rule purposes**: TUN address exclusions, core IP direct rules, and service process rules do not replace one another. Do not force all `100.*` addresses, private networks, browser traffic, or Codex traffic to direct.
+- **Exit nodes/mobile**: this is not a design for two full tunnels. Normal iPhone/iPad/Android VPN modes generally allow only one active VPN; desktop process rules cannot solve that. Do not disable firewalls for troubleshooting.
+
+Official references: [System proxy/PAC](https://github.com/2dust/v2rayN/wiki/Description-of-system-proxy-routing) · [v2rayN fields, TUN, and rule order](https://github.com/2dust/v2rayN/wiki/Description-of-some-ui) · [Custom routing format](https://github.com/2dust/v2rayN/wiki/Description-of-custom-routing-rules) · [Daemon identities](https://tailscale.com/docs/reference/tailscaled) · [MagicDNS](https://tailscale.com/docs/features/magicdns) · [VPN coexistence limits](https://tailscale.com/docs/reference/faq/other-vpns)
+
+</details>
 
 ## 8. Alternative: ZeroTier across networks
 
