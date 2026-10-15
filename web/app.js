@@ -16,6 +16,31 @@ let refreshWhileBusy = false;
 let liteCatalogVersion = '';
 let workspaceTitle = 'CodeRelayBridge';
 let workspaceAppVersion = '';
+function applyFeedbackMetadata(data) {
+  if (!data || !Object.prototype.hasOwnProperty.call(data, 'feedbackUrl')) return;
+  const link = $('bugFeedback');
+  let destination = '';
+  try {
+    const url = new URL(data.feedbackUrl);
+    if (url.origin === 'https://github.com' && !url.username && !url.password &&
+        /^\/Gabriel0224\/CodeRelayBridge(?:-[A-Za-z0-9-]+)?\/issues\/new$/.test(url.pathname) &&
+        url.searchParams.get('template') === 'bug_report.yml') {
+      url.search = '';
+      url.hash = '';
+      url.searchParams.set('template', 'bug_report.yml');
+      if (/^\d+\.\d+\.\d+$/.test(data.appVersion || '')) url.searchParams.set('version', data.appVersion);
+      destination = url.href;
+    }
+  } catch (_) {}
+  link.setAttribute('aria-disabled', String(!destination));
+  link.tabIndex = destination ? 0 : -1;
+  if (destination) link.href = destination;
+  else link.removeAttribute('href');
+  link.title = uiText(destination ? '在 GitHub 反馈问题（需登录；请勿包含隐私信息）' : '反馈入口暂不可用；请刷新面板');
+}
+$('bugFeedback').addEventListener('click', event => {
+  if ($('bugFeedback').getAttribute('aria-disabled') === 'true') event.preventDefault();
+});
 let relayConnectionMessage = '正在连接…';
 const threadSnapshots = new Map();
 const threadFetches = new Map();
@@ -6848,6 +6873,7 @@ async function refresh(seed = null) {
     await bindOutgoingScope(data.browserScope);
     if (data.uiTitle) applyWorkspaceTitle(data.uiTitle);
     applyAppVersion(data.appVersion);
+    applyFeedbackMetadata(data);
     const workspaceChanged = Array.isArray(data.workspaceThreads);
     if (workspaceChanged) {
       workspaceThreads = data.workspaceThreads;
@@ -8748,5 +8774,6 @@ document.title = uiText(document.title);
 api('/api/ui/title').then(result => {
   applyWorkspaceTitle(result.title);
   applyAppVersion(result.appVersion);
+  applyFeedbackMetadata(result);
 }).catch(() => {});
 start().catch(showLogin);

@@ -17,6 +17,7 @@ LIVE_URL = re.compile(b'api\\.day\\.app/[A-Za-z0-9_-]+|[A-Za-z0-9-]+\\.tail[a-zA
 DOC_NETS = tuple((ipaddress.ip_network(n) for n in ('192.0.2.0/24', '198.51.100.0/24', '203.0.113.0/24')))
 FIXTURE_HOMES = {b'relay', b'relay-test', b'relay-other', b'test', b'test-user', b'example', b'example-user', b'user'}
 FIXTURE_IPS = {'100.64.0.2', '100.64.0.3', '1.1.1.1', '8.8.8.8', '8.8.4.4'}
+APPROVED_DOCUMENT_IMAGES = {'docs/images/crb-empty-desktop.png': '1e67a2f4e9c4ae4f6461ffd3cdbf289c5b7bb678c45492362a933fb54559ac9f'}
 
 def git(*args):
     return subprocess.check_output(['git', *args], cwd=ROOT)
@@ -36,6 +37,10 @@ def check(name, data):
 
     def fail(kind, line=0):
         errors.append({'file': name, 'line': line, 'category': kind})
+    if name in APPROVED_DOCUMENT_IMAGES:
+        if hashlib.sha256(data).hexdigest() != APPROVED_DOCUMENT_IMAGES[name]:
+            fail('unreviewed-document-image')
+        return errors
     if path.is_absolute() or '..' in path.parts or any((x in FORBIDDEN_PARTS for x in path.parts)):
         fail('forbidden-directory')
     if path.name in FORBIDDEN_NAMES or path.suffix in FORBIDDEN_SUFFIXES or '.bak' in path.name:

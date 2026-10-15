@@ -1,0 +1,77 @@
+name: Bug 反馈 / Bug report
+description: 报告 CRB 的异常行为 / Report a problem with CRB
+title: "[Bug] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        请先搜索已有 Issues。此表单需要登录 GitHub，只有点击提交后才会创建问题。
+        Search existing issues first. Sign in to GitHub and submit this form to create a report.
+
+        **请勿提交密码、Token、私钥、聊天内容、真实设备名称、地址、个人路径或未脱敏日志。**
+        **Do not include credentials, chat content, real device names/addresses, personal paths, or unredacted logs.**
+        CRB 不会自动附带这些信息；截图和日志请自行检查、脱敏后再添加。
+        CRB does not attach these details automatically. Review and redact attachments yourself.
+  - type: input
+    id: version
+    attributes:
+      label: CRB 版本 / Version
+      description: 查看面板左上角或程序关于页面 / Check the panel header or the app's About page.
+      placeholder: "0.6.37"
+    validations:
+      required: true
+  - type: dropdown
+    id: component
+    attributes:
+      label: 出问题的位置 / Affected component
+      multiple: true
+      options:
+        - 网页面板 / Web panel
+        - 托盘客户端 / Tray client
+        - 服务端管理界面 / Server manager
+        - 安装或更新 / Installation or updates
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: 使用的系统 / Operating system
+      multiple: true
+      options:
+        - Windows
+        - Linux (Ubuntu / Mint)
+        - macOS
+        - iOS / iPadOS
+        - Android
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: 复现步骤 / Steps to reproduce
+      placeholder: |
+        1. 打开哪个页面 / Open which page
+        2. 点击哪个按钮 / Click which control
+        3. 出现什么问题 / Observe what happens
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望结果 / Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: 实际结果 / Actual behavior
+      description: 可补充浏览器版本、网络模式及已脱敏截图；不要粘贴原始配置。 / Optionally add browser version, network mode, or redacted screenshots. Do not paste raw configuration.
+    validations:
+      required: true
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: 提交前检查 / Before submitting
+      options:
+        - label: 我已移除报告及附件中的个人信息和凭据。 / I removed personal information and credentials from this report and its attachments.
+          required: true

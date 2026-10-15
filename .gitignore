@@ -23,6 +23,7 @@
 *.dll
 *.pyd
 *.png
+!/docs/images/crb-empty-desktop.png
 *.jpg
 *.jpeg
 *.gif

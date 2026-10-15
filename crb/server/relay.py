@@ -38,6 +38,7 @@ from crb.paths import web_root
 from desktop_client import PRODUCT_NAME, VERSION as PROGRAM_VERSION
 from crb.server.panel_restart import RestartManager
 from crb.common.client_pairing import ClientPairing, verify_panel_login
+from crb.common.feedback import issue_form_url
 from crb.server.persistence import relay_database
 HOST_ONLINE_TTL = 45
 RESPONSE_GZIP_MIN_BYTES = 4 * 1024
@@ -912,7 +913,7 @@ def handler_factory(app):
                 if path == '/api/ui/title':
                     with app.lock:
                         title = app.ui_title
-                    return self.response(200, {'title': title, 'appVersion': PROGRAM_VERSION})
+                    return self.response(200, {'title': title, 'appVersion': PROGRAM_VERSION, 'feedbackUrl': issue_form_url()})
                 if not app.authenticated(self.headers):
                     return self.response(401, {'error': '请先登录'})
                 if path == '/api/panel/status':
@@ -947,6 +948,7 @@ def handler_factory(app):
                         if len(json.dumps(candidate, ensure_ascii=False).encode()) < len(encoded) * 0.8:
                             response = {'version': version, 'uiTitle': title, 'hosts': None, **candidate}
                     response['appVersion'] = PROGRAM_VERSION
+                    response['feedbackUrl'] = issue_form_url()
                     response['workspaceThreads'] = None if previous and previous[2] == workspace else workspace
                     response['generation'] = app.generation
                     response['browserScope'] = hmac.new(app.cfg['session_secret'].encode(), ('relay-outbox-v1:' + str(app.cfg.get('username', 'relay'))).encode(), hashlib.sha256).hexdigest()

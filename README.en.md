@@ -4,6 +4,12 @@
 
 Use Codex and DeepSeek Harness desktop apps across multiple computers from one browser. Manage projects, continue chats, view execution progress, and access files and terminals from a computer, tablet, or phone.
 
+## Preview
+
+![CodeRelayBridge empty interface](docs/images/crb-empty-desktop.png)
+
+An empty-state example with no real accounts, devices, or conversations loaded.
+
 ## Features
 
 - Desktop chat, execution status, questions, and approval synchronization.
@@ -55,6 +61,8 @@ Check v2rayN's TUN switch, then follow the matching steps:
 [Step-by-step setup: fields, values, and verification](docs/USER_GUIDE.en.md#71-using-tailscale-with-v2rayn)
 
 ## Updates and security
+
+Select Feedback in the panel's lower-left corner to open this repository's GitHub bug form. GitHub sign-in is required. Only the CRB version is prefilled; logs, chats, and device details are not uploaded automatically. Redact your report before submitting.
 
 Select “Check for CRB updates” in the client or server. After confirmation, the updater verifies the manifest and package, preserves pairing and settings, and restarts Relay. Connections and panel terminals briefly disconnect; the original AI desktop apps are not restarted.
 
