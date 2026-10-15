@@ -43,6 +43,12 @@ A computer can run both applications. For access across locations, use a private
 
 Full instructions: [English user guide](docs/USER_GUIDE.en.md) · [中文使用指南](docs/USER_GUIDE.zh-CN.md)
 
+## Using Tailscale with v2rayN
+
+If enabling v2rayN makes the panel unreachable or slow, distinguish system proxy settings from TUN interception. Add the actual server IP/MagicDNS name to proxy exceptions; for TUN, exclude Tailscale address ranges and check the Windows `tailscaled.exe` service's direct-routing rule. Exempting only the tray or CLI is not the same as exempting the service. Do not force the entire browser or Codex app to connect directly.
+
+See the [coexistence setup](docs/USER_GUIDE.en.md#71-using-tailscale-with-v2rayn) for fields, IPv4/IPv6 ranges, DNS, and verification.
+
 ## Updates and security
 
 Select “Check for CRB updates” in the client or server. After confirmation, the updater verifies the manifest and package, preserves pairing and settings, and restarts Relay. Connections and panel terminals briefly disconnect; the original AI desktop apps are not restarted.

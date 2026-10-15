@@ -411,12 +411,12 @@
       "exportSha256": "d3580d675bf2c565e95440c88f70b0946ab64330e5214ea773d36334749d23a3"
     },
     "docs/USER_GUIDE.en.md": {
-      "canonicalSha256": "e8afbd618fd0e7107ae5c1a58c288f36d3539af8adc02b5609f742a254942031",
-      "exportSha256": "e8afbd618fd0e7107ae5c1a58c288f36d3539af8adc02b5609f742a254942031"
+      "canonicalSha256": "5e1c691403a3e0b51656feacb4076c15280506ad70fea959f7dd12c4eaf9f336",
+      "exportSha256": "5e1c691403a3e0b51656feacb4076c15280506ad70fea959f7dd12c4eaf9f336"
     },
     "docs/USER_GUIDE.zh-CN.md": {
-      "canonicalSha256": "5da0397bc391cd74ca1eb81978c6fab6821782551f2f1d6d8683286922fb5054",
-      "exportSha256": "5da0397bc391cd74ca1eb81978c6fab6821782551f2f1d6d8683286922fb5054"
+      "canonicalSha256": "bebbbb22dfbadb3d392f01b7a3014437ee184e92a7173997d82ea47a1da45390",
+      "exportSha256": "bebbbb22dfbadb3d392f01b7a3014437ee184e92a7173997d82ea47a1da45390"
     },
     "release_policy.json": {
       "canonicalSha256": "96c9a90c75228ae49b4d4e41ee4964d188eaecb0f9e2875850819f656c5f558a",

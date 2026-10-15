@@ -117,6 +117,41 @@ Tailscale 的“tailnet”可理解为你的私有虚拟网络。最简单的方
 
 MagicDNS 名称可以用于网页地址，但如果使用 HTTP 名称地址配对被拒绝，请按本指南使用实际的 Tailscale IPv4，或先配置受信任的 HTTPS；不要关闭证书校验。常规虚拟局域网方案不需要开放公网或启用 Funnel。
 
+### 7.1 同时使用 Tailscale 与 v2rayN
+
+以下配置建议适用于通过 **Tailscale 私有地址**访问 CRB 的桌面电脑，不是所有代理环境的通用模板。先备份 v2rayN 配置；菜单名称与进程匹配能力取决于版本和实际核心。Tailscale 官方说明两种 VPN 可能因路由、防火墙或地址冲突而不能直接共存。[官方兼容性说明](https://tailscale.com/docs/reference/faq/other-vpns)
+
+#### 仅使用系统代理，未开启 TUN
+
+在 v2rayN **“设置 → 参数设置 → 代理配置设置 → 例外”**中，保留原有条目，追加 CRB 服务端**实际的 Tailscale IPv4**；使用 MagicDNS 时，再追加实际完整主机名。多个条目按该输入框要求用逗号隔开，保留 `localhost`、`127.0.0.1` 等本机例外。此处是主机名／地址例外，**不要把下面的 CIDR 网段直接粘贴进来**；应用自己的代理设置也需单独核对。[v2rayN 系统代理说明](https://github.com/2dust/v2rayN/wiki/Description-of-system-proxy-routing)
+
+#### 开启 TUN 时：网段和进程是两件事
+
+1. 在 **“TUN 模式设置 → 路由排除地址”**中，保留已有内容并追加 `100.64.0.0/10,fd7a:115c:a1e0::/48`，使私有 IPv4／IPv6 目标不被 TUN 自动路由接管。使用 Tailscale 子网路由时，还需排除实际发布的目标子网；不要盲目排除所有私网，也不要将所有 `100.*` 地址都当作 Tailscale。
+2. 核心路由规则中，把需要经过核心的上述 IP 网段设为 **`direct`（直连）**，放在兜底代理规则之前并启用对应规则集。**核心的 direct 出站不等于操作系统的 TUN 路由排除**，不能用其中一个替代另一个；仅“绕过局域网／大陆”也不保证覆盖 Tailscale。
+3. 如果 TUN 仍接管 Tailscale 自身的联网流量，在 **“路由设置 → 规则详情”**中新建一条规则：**进程名 `tailscaled.exe`，出站 `direct`**，并移到兜底规则之前。这是 Windows 真正处理网络的后台服务；`tailscale.exe` 是命令行，`tailscale-ipn.exe` 是界面，不能只加后二者。若登录／界面流量也需绕过，可按实际进程另加规则。进程与 IP 分成不同规则，保存后重载 v2rayN 核心，用日志确认命中；不能假定所有核心都支持同样的进程识别。
+
+进程规则保护的是 Tailscale 对公网节点／中继等的连接，网段排除保护的是电脑到 tailnet 的连接。Linux 后台通常是 `tailscaled`；macOS GUI 版使用网络扩展，不能照抄 Windows 进程名。也不要将 `RelayClient.exe`、`RelayServer.exe`、整个浏览器或 Codex 一律设为直连，这会同时影响它们正常的公网访问。[Tailscale 后台进程说明](https://tailscale.com/docs/reference/tailscaled) · [v2rayN 输入框与规则顺序](https://github.com/2dust/v2rayN/wiki/Description-of-some-ui) · [自定义路由格式](https://github.com/2dust/v2rayN/wiki/Description-of-custom-routing-rules)
+
+#### DNS、出口节点与手机
+
+- IP 地址能访问、MagicDNS 名称不能访问时，检查该私有名称是否仍由系统／Tailscale 解析，而不是被代理远端 DNS 或 FakeIP 接管。单加域名 direct 规则不保证 DNS 已正确分流；先用实际 Tailscale IP 区分路由与解析问题。[MagicDNS](https://tailscale.com/docs/features/magicdns)
+- 此方案不要同时启用 Tailscale **出口节点（Exit Node）**来接管默认网络；出口节点与另一套全隧道的组合需要独立设计，不能套用这些步骤。[共存限制](https://tailscale.com/docs/reference/faq/other-vpns)
+- iPhone／iPad／Android 的常规 VPN 模式通常不能同时运行两个 VPN。切到另一代理 VPN 后，Tailscale 可能断开；桌面上的进程规则不能解决这个限制。区分私有 tailnet 访问与单独配置的公网 HTTPS 入口，不要为此关闭防火墙或证书校验。
+
+#### 验证是否真正恢复
+
+将下面的占位符替换为自己的服务端 Tailscale IP。先保持 Tailscale 在线、关闭 v2rayN TUN 测一遍，再开启 TUN 重复相同检查：
+
+```powershell
+tailscale status
+tailscale ping SERVER_TAILSCALE_IP
+Test-NetConnection SERVER_TAILSCALE_IP -Port 8799
+curl.exe --noproxy "*" --max-time 10 http://SERVER_TAILSCALE_IP:8799/
+```
+
+`curl --noproxy` 只排除该请求的 HTTP 代理，**不会绕过 TUN**。以真实 TCP 端口、网页登录和 CRB 桥接恢复为准；TUN 的 ICMP 应答可能不是远端主机的真实响应，不能只凭普通 ping 宣称成功。HTTP 401／登录重定向能证明服务可达，但不代表已登录；HTTPS 仍需有效证书，不使用 `-k`。[v2rayN TUN／ICMP 说明](https://github.com/2dust/v2rayN/wiki/Description-of-some-ui)
+
 ## 8. 替代方案：通过 ZeroTier 跨网络
 
 ZeroTier 的 Network ID 是加入网络的标识，**不是 CRB 网页地址，也不是登录密码**。使用私有网络并逐台授权。[官方创建网络指南](https://docs.zerotier.com/start/)

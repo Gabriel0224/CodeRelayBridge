@@ -43,6 +43,12 @@
 
 详细步骤：[中文使用指南](docs/USER_GUIDE.zh-CN.md) · [English user guide](docs/USER_GUIDE.en.md)
 
+## 同时使用 Tailscale 与 v2rayN
+
+开启 v2rayN 后面板连不上或明显变慢时，先区分系统代理和 TUN：系统代理需为服务端实际 IP／MagicDNS 名称设置例外；TUN 还应排除 Tailscale 网段，并检查 Windows 后台服务 `tailscaled.exe` 的直连规则。仅添加托盘或命令行进程不等于排除后台服务，也不要把整个浏览器或 Codex 强制直连。
+
+具体填写位置、IPv4／IPv6 网段、DNS 与验证步骤见[共存配置说明](docs/USER_GUIDE.zh-CN.md#71-同时使用-tailscale-与-v2rayn)。
+
 ## 更新与安全
 
 在客户端或服务端中选择“检查 CRB 更新”。确认安装后，程序会校验签名和安装包，保留配对与设置，并重新启动 Relay。更新期间连接和网页终端会短暂中断，不会重启原桌面 AI 应用。
