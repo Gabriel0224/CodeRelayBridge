@@ -12,6 +12,9 @@ let panelRestartDialogEpoch = 0;
 let lastStreamAuthProbe = 0;
 let busy = false;
 let refreshing = false;
+let loginPending = false;
+let hostRemovalEpoch = 0;
+const hostRemovals = new Map();
 let refreshWhileBusy = false;
 let liteCatalogVersion = '';
 let workspaceTitle = 'CodeRelayBridge';
@@ -1091,7 +1094,7 @@ async function api(path, data, options = {}) {
   }
   if (!jsonResponse) throw new Error(`服务器返回 HTTP ${response.status}，请稍后重试`);
   const value = await response.json();
-  if (response.status === 401) showLogin();
+  if (response.status === 401 && path !== '/api/login') showLogin();
   if (!response.ok) {
     const error = new Error(value.error || '请求失败');
     error.httpStatus = response.status;
@@ -6903,6 +6906,23 @@ async function restoreTerminalSessions() {
   renderTerminalTabs();
 }
 
+function removeDisconnectedHosts(event) {
+  let value;
+  try { value = JSON.parse(event.data); } catch (_) { return; }
+  if (!Array.isArray(value.hosts)) return;
+  const removed = new Set(value.hosts.filter(id => typeof id === 'string' && id.length <= 200));
+  if (!removed.size) return;
+  const epoch = ++hostRemovalEpoch;
+  for (const id of removed) hostRemovals.set(id, epoch);
+  while (hostRemovals.size > 256) hostRemovals.delete(hostRemovals.keys().next().value);
+  catalog = catalog.filter(host => !removed.has(host.id));
+  if (selected && removed.has(selected.host)) clearThread();
+  if (removed.has(selectedHostId)) selectedHostId = applicationHosts()[0]?.id || '';
+  syncSidebarSelectors();
+  renderCatalog();
+  scheduleCatalogRefresh();
+}
+
 async function refresh(seed = null) {
   if (panelRestarting) return;
   if (refreshing) {
@@ -6910,6 +6930,7 @@ async function refresh(seed = null) {
     return;
   }
   refreshing = true;
+  const removalEpoch = hostRemovalEpoch;
   try {
     let data = seed || await api(liteCatalogPath());
     if (Array.isArray(data.hostPatches) &&
@@ -6934,6 +6955,7 @@ async function refresh(seed = null) {
       lastCatalog = '';
     }
     if (Array.isArray(data.hosts)) {
+      data.hosts = data.hosts.filter(host => (hostRemovals.get(host.id) || 0) <= removalEpoch);
       trackThreadCompletions(data.hosts);
       catalog = data.hosts;
       if (!catalog.some(host => host.id === selectedHostId)) {
@@ -7099,6 +7121,7 @@ async function start() {
   $('workspace').hidden = false;
   source?.close();
   source = new EventSource('/api/lite/events');
+  source.addEventListener('hosts-removed', removeDisconnectedHosts);
   source.onmessage = scheduleCatalogRefresh;
   source.onerror = () => {
     setRelayConnectionStatus('连接中断，正在重试');
@@ -7228,6 +7251,11 @@ $('panelRestartDialog').addEventListener('cancel', event => {if (panelRestarting
 
 $('loginForm').onsubmit = async event => {
   event.preventDefault();
+  if (loginPending) return;
+  loginPending = true;
+  const button = $('loginForm').querySelector('[type="submit"]');
+  button.disabled = true;
+  $('loginError').textContent = '';
   try {
     await api('/api/login', {password: $('password').value});
     $('password').value = '';
@@ -7235,6 +7263,9 @@ $('loginForm').onsubmit = async event => {
     await start();
   } catch (error) {
     $('loginError').textContent = error.message;
+  } finally {
+    loginPending = false;
+    button.disabled = false;
   }
 };
 

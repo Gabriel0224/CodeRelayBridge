@@ -425,6 +425,7 @@ class Relay:
         self.generation = str(uuid.uuid4())
         self.hosts = {}
         self.catalog_versions = {}
+        self.removed_host_events = []
         self.secure_commands = {}
         self.lite_views = {}
         self.failures = {}
@@ -678,9 +679,12 @@ class Relay:
             db.execute('INSERT INTO traffic_sessions(started) VALUES (?)', (now,))
         return {'ok': True, 'startedAt': now}
 
-    def signal(self):
+    def signal(self, removed_hosts=()):
         with self.changed:
             self.version += 1
+            if removed_hosts:
+                self.removed_host_events.append((self.version, tuple(removed_hosts)))
+                self.removed_host_events = self.removed_host_events[-64:]
             self.changed.notify_all()
 
     def cookie(self, lifetime=7 * 86400):
@@ -814,6 +818,9 @@ def handler_factory(app):
                 pass
 
         def response(self, status, data, content_type='application/json; charset=utf-8', extra=None, cache_control='no-store', compress=False):
+            if self.command == 'POST' and (not getattr(self, '_post_body_handled', False)):
+                self.discard_post_body()
+                extra = {**(extra or {}), 'Connection': 'close'}
             body = json.dumps(data, ensure_ascii=False).encode() if not isinstance(data, bytes) else data
             encoding = ''
             compressible = content_type.startswith('application/json') or content_type.split(';', 1)[0].endswith('+json') or content_type.startswith('application/javascript') or content_type.startswith('text/')
@@ -849,10 +856,16 @@ def handler_factory(app):
             return self.response(200, data, content_type, headers, cache_control=cache_control, compress=True)
 
         def body(self):
+            if self.headers.get('Transfer-Encoding') or len(self.headers.get_all('Content-Length', [])) != 1:
+                raise ValueError('请求体长度格式不受支持')
             size = int(self.headers.get('Content-Length', '0'))
             if size < 0 or size > 32 * 1024 * 1024:
                 raise ValueError('请求内容过大')
             raw = self.rfile.read(size)
+            self._post_body_handled = True
+            if len(raw) != size:
+                self.close_connection = True
+                raise ValueError('请求内容不完整')
             encoding = self.headers.get('Content-Encoding', '').strip().lower()
             if encoding:
                 if encoding != 'gzip':
@@ -865,18 +878,32 @@ def handler_factory(app):
 
         def check_origin(self):
             origin = self.headers.get('Origin')
-            if origin != app.cfg['public_url']:
+            configured = urlsplit(app.cfg['public_url'])
+            allowed = {configured.scheme + '://' + configured.netloc}
+            if app.cfg.get('client_login_mode') == 'local':
+                address = ipaddress.ip_address(self.connection.getsockname()[0])
+                host = '[' + str(address) + ']' if address.version == 6 else str(address)
+                authority = host + ':' + str(self.server.server_port)
+                if self.headers.get('Host') == authority:
+                    allowed.add('http://' + authority)
+                local = 'localhost:' + str(self.server.server_port)
+                if address.is_loopback and self.headers.get('Host') == local:
+                    allowed.add('http://' + local)
+            if origin not in allowed:
                 self.reject_post(403, {'error': 'Origin 不匹配'})
                 return False
             return True
 
-        def reject_post(self, status, payload):
+        def discard_post_body(self):
             self.close_connection = True
+            if getattr(self, '_post_body_handled', False):
+                return
+            self._post_body_handled = True
             try:
                 size = int(self.headers.get('Content-Length', '0'))
             except ValueError:
                 size = -1
-            if self.command == 'POST' and 0 < size <= 64 * 1024:
+            if self.command == 'POST' and (not self.headers.get('Transfer-Encoding')) and (0 < size <= 64 * 1024):
                 previous = self.connection.gettimeout()
                 try:
                     self.connection.settimeout(2)
@@ -885,6 +912,9 @@ def handler_factory(app):
                     pass
                 finally:
                     self.connection.settimeout(previous)
+
+        def reject_post(self, status, payload):
+            self.discard_post_body()
             return self.response(status, payload, extra={'Connection': 'close'})
 
         def do_HEAD(self):
@@ -1015,6 +1045,7 @@ def handler_factory(app):
                 self.response(400, {'error': str(exc)})
 
         def do_POST(self):
+            self._post_body_handled = False
             try:
                 if self.path == '/agent/sync':
                     return self.agent_sync()
@@ -1074,7 +1105,7 @@ def handler_factory(app):
                                     job.update(result={'ok': False, 'error': '设备配对已解除'}, text='')
                             with app.db() as db:
                                 db.execute('UPDATE commands SET result=? WHERE host=? AND result IS NULL', (json.dumps({'ok': False, 'error': '设备配对已解除'}), host))
-                        app.signal()
+                        app.signal(removed_hosts=[host])
                     return self.response(200, {'ok': True, **result})
                 if not app.authenticated(self.headers):
                     return self.reject_post(401, {'error': '请先登录'})
@@ -1087,7 +1118,7 @@ def handler_factory(app):
                             app.hosts.pop(host, None)
                             app.lite_views.pop(host, None)
                         app.catalog_versions.clear()
-                    app.signal()
+                    app.signal(removed_hosts=hosts)
                     return self.response(200, {'ok': True, 'removed': len(hosts)})
                 if self.path == '/api/panel/restart':
                     request = self.body()
@@ -1289,6 +1320,7 @@ def handler_factory(app):
             first_emit = True
             end = time.monotonic() + 300
             while time.monotonic() < end:
+                removed = []
                 with app.changed:
                     if version == app.version:
                         app.changed.wait(15)
@@ -1299,8 +1331,11 @@ def handler_factory(app):
                             remaining = last_emit + min_interval - time.monotonic()
                     changed = version != app.version
                     if changed:
+                        removed = sorted({host for number, hosts in app.removed_host_events if number > version for host in hosts if host not in app.hosts})
                         version = app.version
                 payload = f'data: {version}\n\n' if changed else ': keepalive\n\n'
+                if removed:
+                    payload = 'event: hosts-removed\ndata: ' + json.dumps({'hosts': removed}) + '\n\n' + payload
                 self.wfile.write(payload.encode())
                 self.wfile.flush()
                 self.count_public_traffic(len(payload.encode()), count_request=first_emit)

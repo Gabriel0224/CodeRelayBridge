@@ -867,6 +867,8 @@ class MainWindow(QMainWindow):
                 self.setup_dialog.completed(name, result)
             if name == 'setup-connect':
                 self.busy_key = None
+                self.notice.setText(str(result))
+                self.notice.setToolTip(str(result))
                 self.settings = self.preferences.load()
                 self.url.setText(self.settings['panel_url'])
                 self.set_controls_busy(False)

@@ -7,7 +7,7 @@ import secrets
 import sys
 import time
 import urllib.request
-from desktop_client.backend import BridgeSpec, ClientError, WindowsTasks, redact
+from desktop_client.backend import BridgeSpec, ClientError, WindowsTasks, Preferences, redact
 from desktop_client.connections import atomic_json
 from desktop_client.platform_support import data_root, installed_executable
 
@@ -18,6 +18,17 @@ def server_root():
         if profile.name.startswith('CodexRelayServer-SetupTest-'):
             return profile
     return data_root('CodexRelayServer')
+
+def suggested_panel_url(bind, port):
+    import ipaddress
+    address = ipaddress.ip_address(str(bind).strip())
+    port = int(port)
+    if not 1024 <= port <= 65535:
+        raise ClientError('端口需要在 1024–65535 之间。')
+    if address.is_unspecified:
+        address = ipaddress.ip_address('::1' if address.version == 6 else '127.0.0.1')
+    host = '[' + str(address) + ']' if address.version == 6 else str(address)
+    return 'http://' + host + ':' + str(port)
 
 class ServerManager:
 
@@ -54,12 +65,13 @@ class ServerManager:
     def create(self, bind, port, url, username, password):
         import ipaddress
         from desktop_client.backend import Preferences
+        bind = str(bind).strip()
         ipaddress.ip_address(bind)
         port = int(port)
         if not 1024 <= port <= 65535:
             raise ClientError('端口需要在 1024–65535 之间。')
-        url = Preferences.validate_url(url).rstrip('/')
-        if not username.strip() or len(password) < 8:
+        url = Preferences.validate_url(url or suggested_panel_url(bind, port)).rstrip('/')
+        if not username.strip() or not 8 <= len(password) <= 256:
             raise ClientError('请填写账号和至少 8 位密码。')
         path = self.root / 'relay.json'
         if path.exists() or self.config_path().exists():
@@ -77,6 +89,40 @@ class ServerManager:
         root = self.root
         suffix = ' - SetupTest ' + hashlib.sha256(str(root).encode()).hexdigest()[:8] if root.name.startswith('CodexRelayServer-SetupTest-') else ''
         return BridgeSpec('server', 'Relay Server', 'Codex Relay Server' + suffix, root / 'unused.py', Path(sys.executable), self.config_path(), root / 'server.log', installed_executable(root, 'RelayServer'), root / 'runtime/server.json')
+
+    def save(self, bind, port, url, username, password):
+        if not self.config_path().exists():
+            return self.create(bind, port, url, username, password)
+        cfg = self.config()
+        if cfg.get('client_login_mode') != 'local':
+            raise ClientError('现有服务使用外部登录；请在外部登录入口管理密码，未覆盖原配置。')
+        generated = suggested_panel_url(bind, port)
+        bind = str(bind).strip()
+        url = Preferences.validate_url(url or generated).rstrip('/')
+        username = username.strip()
+        if not username or (password and (not 8 <= len(password) <= 256)):
+            raise ClientError('请填写账号和至少 8 位密码。')
+        updated = dict(cfg, bind=bind, port=int(port), public_url=url, username=username)
+        if password:
+            updated['password_sha256'] = hashlib.sha256(password.encode()).hexdigest()
+        running = self.status()['running']
+        atomic_json(self.config_path(), updated)
+        if os.name != 'nt':
+            self.config_path().chmod(384)
+        if running:
+            try:
+                self.control('restart')
+                deadline = time.monotonic() + 15
+                while time.monotonic() < deadline:
+                    if self.status()['running']:
+                        if password:
+                            self.request('/api/login', {'password': password})
+                        return '配置已保存并已应用到服务；客户端配对和历史保持不变。'
+                    time.sleep(0.25)
+            except (OSError, ValueError, ClientError):
+                pass
+            raise ClientError('新配置已保存，但服务尚未确认应用；请检查日志并重启服务，不要继续使用旧页面判断密码。')
+        return '配置已保存；启动服务后生效，客户端配对和历史保持不变。'
 
     def tasks(self):
         if sys.platform == 'win32':

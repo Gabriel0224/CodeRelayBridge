@@ -145,15 +145,12 @@ class SetupDialog(QDialog):
     def completed(self, name, result, failed=False):
         self.busy(False)
         self.result.setText(('未完成：' if failed else '') + result)
+        if name == 'setup-connect' and (not failed):
+            self.password.clear()
+            self.accept()
+            return
         from PySide6.QtCore import QTimer
         QTimer.singleShot(0, lambda: self.scroll.ensureWidgetVisible(self.result))
-        if name == 'setup-connect' and (not failed):
-            self.cancel.setText('完成')
-            for key, checkbox in self.apps.items():
-                if key not in self.service.missing():
-                    checkbox.setChecked(False)
-                    checkbox.setEnabled(False)
-            self.connect_button.setEnabled(bool(self.service.missing()))
 
     def reject(self):
         if not self.working:

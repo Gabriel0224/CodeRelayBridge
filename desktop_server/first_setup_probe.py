@@ -71,6 +71,31 @@ def probe(bind='127.0.0.1'):
             else:
                 checks['anonymous_rejected'] = False
             client = EnrollmentClient(base)
+            import http.client
+            web = http.client.HTTPConnection(bind, port, timeout=5)
+            try:
+
+                def web_post(path, payload, cookie=''):
+                    headers = {'Origin': base, 'Content-Type': 'application/json'}
+                    if cookie:
+                        headers['Cookie'] = cookie
+                    web.request('POST', path, json.dumps(payload).encode(), headers)
+                    response = web.getresponse()
+                    response.read()
+                    return (response.status, response.getheader('Set-Cookie', '').split(';')[0])
+                status, cookie = web_post('/api/login', {'password': password})
+                checks['configured_password_works_in_actual_web_login'] = status == 200 and bool(cookie)
+                for _ in range(3):
+                    if web_post('/api/logout', {}, cookie)[0] != 200:
+                        break
+                    status, cookie = web_post('/api/login', {'password': password})
+                    if status != 200:
+                        break
+                else:
+                    checks['repeated_logout_login_without_http501'] = True
+                checks.setdefault('repeated_logout_login_without_http501', False)
+            finally:
+                web.close()
             connections = client.enroll(str(uuid.uuid4()), 'Setup probe', ['codex', 'deepseek'], password, 'setup-test')['connections']
             checks['fresh_login_and_pairing'] = set(connections) == {'codex', 'deepseek'}
             before = manager.config_path().read_bytes()

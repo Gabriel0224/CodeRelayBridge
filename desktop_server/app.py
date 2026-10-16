@@ -5,9 +5,9 @@ from PySide6.QtGui import QAction, QDesktopServices
 from PySide6.QtWidgets import QApplication, QFileDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox, QPlainTextEdit, QPushButton, QSpinBox, QStackedWidget, QCheckBox, QSystemTrayIcon, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget, QHeaderView
 from desktop_client.app import STYLE, Work, SingleInstance, app_icon, note, scroll_page
 from desktop_client.platform_support import platform_name
-from desktop_server.backend import ServerManager
+from desktop_server.backend import ServerManager, suggested_panel_url
 from desktop_client import VERSION
-from desktop_client.backend import Preferences
+from desktop_client.backend import Preferences, ClientError
 from desktop_client.i18n import QAction, QFileDialog, QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox, QPushButton, QCheckBox, QSystemTrayIcon, QTableWidget, QFormLayout, initialize, language_picker, tr, status_table_item
 from desktop_client.edition import edition_label
 
@@ -116,20 +116,34 @@ class ServerWindow(QMainWindow):
         self.port.setRange(1024, 65535)
         self.port.setValue(8799)
         self.url = QLineEdit('http://127.0.0.1:8799')
+        self.url_overridden = False
+        self.bind.textChanged.connect(self.update_panel_url)
+        self.port.valueChanged.connect(self.update_panel_url)
+        self.url.textEdited.connect(self.panel_url_edited)
         self.username = QLineEdit('relay')
         self.password = QLineEdit()
         self.password.setEchoMode(QLineEdit.EchoMode.Password)
         self.password.setPlaceholderText('至少 8 位；只存储密码摘要')
+        if self.manager.config_path().exists():
+            cfg = self.manager.config()
+            self.bind.setText(str(cfg['bind']))
+            self.port.setValue(int(cfg['port']))
+            self.url.setText(cfg['public_url'])
+            self.url_overridden = cfg['public_url'] != suggested_panel_url(cfg['bind'], cfg['port'])
+            self.username.setText(cfg.get('username', 'relay'))
+            self.password.setPlaceholderText('留空保持现有密码；填写新密码后保存生效')
         for label, field in [('监听 IP', self.bind), ('监听端口', self.port), ('网页访问地址', self.url), ('网页登录账号', self.username), ('网页登录密码', self.password)]:
             form.addRow(label, field)
         layout.addLayout(form)
+        layout.addWidget(note('网页访问地址根据监听 IP 和端口自动生成；使用域名或反代时可自行修改。'))
         languages = QHBoxLayout()
         languages.addWidget(QLabel('语言'))
         self.language_select = language_picker(self, self.preferences, lambda value, error: self.notice.setText('保存失败：' + error) if error else None)
         languages.addWidget(self.language_select)
         languages.addStretch()
         layout.addLayout(languages)
-        create = QPushButton('创建服务器配置')
+        create = QPushButton('保存服务器配置' if self.manager.config_path().exists() else '创建服务器配置')
+        self.save_config_button = create
         create.clicked.connect(self.create_config)
         layout.addWidget(create, alignment=Qt.AlignmentFlag.AlignLeft)
         import_button = QPushButton('选择已有服务器配置…')
@@ -154,6 +168,19 @@ class ServerWindow(QMainWindow):
         layout.addWidget(note('现有 服务器 服务器无需重新配对。选择原 relay.json 后，可管理原服务；不会复制客户端模型凭证。'))
         layout.addStretch()
         return page
+
+    def update_panel_url(self, *_):
+        if self.url_overridden:
+            return
+        try:
+            self.url.setText(suggested_panel_url(self.bind.text(), self.port.value()))
+        except (ValueError, ClientError):
+            pass
+
+    def panel_url_edited(self, value):
+        self.url_overridden = bool(value.strip())
+        if not self.url_overridden:
+            self.update_panel_url()
 
     def set_autostart(self, enabled):
         from desktop_server.install import install
@@ -215,6 +242,20 @@ class ServerWindow(QMainWindow):
         elif key == 'log':
             self.logs.setPlainText(str(value))
         else:
+            if key == 'import':
+                cfg = self.manager.config()
+                self.bind.setText(str(cfg['bind']))
+                self.port.setValue(int(cfg['port']))
+                self.url.setText(cfg['public_url'])
+                self.url_overridden = cfg['public_url'] != suggested_panel_url(cfg['bind'], cfg['port'])
+                self.username.setText(cfg.get('username', 'relay'))
+                self.password.clear()
+                self.password.setPlaceholderText('留空保持现有密码；填写新密码后保存生效')
+                self.save_config_button.setText('保存服务器配置')
+            if key == 'create':
+                self.password.clear()
+                self.password.setPlaceholderText('留空保持现有密码；填写新密码后保存生效')
+                self.save_config_button.setText('保存服务器配置')
             self.notice.setText(str(value))
             self.refresh()
 
@@ -287,9 +328,10 @@ class ServerWindow(QMainWindow):
     def create_config(self):
         if self.busy:
             return
+        if self.current.get('running') and QMessageBox.question(self, '保存服务器配置', '保存后会重启中继服务以应用配置，网页和终端将短暂断开。原桌面 App 与任务不停止。继续？') != QMessageBox.StandardButton.Yes:
+            return
         args = (self.bind.text(), self.port.value(), self.url.text(), self.username.text(), self.password.text())
-        self.password.clear()
-        self.submit('create', lambda: self.manager.create(*args))
+        self.submit('create', lambda: self.manager.save(*args))
 
     def import_config(self):
         path, _ = QFileDialog.getOpenFileName(self, '选择 Relay 服务配置', '', 'JSON (*.json)')
