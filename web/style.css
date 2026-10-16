@@ -3166,3 +3166,5 @@ html .project-drag-handle.workspace-drag-handle:hover,
 html .project-drag-handle.workspace-drag-handle:focus-visible { background: var(--palette-button-bg); color: #000; filter: none; }
 html[data-theme="light"] .project-drag-handle.workspace-drag-handle { color: #fff; }
 html .project-drag-handle.workspace-drag-handle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.page-reload-recovery{position:fixed;z-index:10000;top:16px;right:16px;max-width:calc(100vw - 32px);padding:12px;display:flex;align-items:center;gap:12px;background:var(--panel,var(--bg,#fff));color:var(--text,#111);border:1px solid var(--line,#aaa);border-radius:12px}
+.page-reload-recovery[hidden]{display:none}

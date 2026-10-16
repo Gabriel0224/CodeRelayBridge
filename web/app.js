@@ -5135,12 +5135,9 @@ function renderNativeThreadStatus(meta, thread, host, online) {
 }
 
 function syncManualThreadRefreshButton() {
-  const host = currentHost();
   const key = selected ? threadKey(selected.host, selected.thread) : '';
   const refreshing = manualThreadRefreshes.has(key);
-  $('refreshThread').disabled = !selected || !host?.online || refreshing;
-  $('refreshThread').textContent = refreshing ? '↻ 刷新中…' : '↻ 刷新对话';
-  $('refreshThread').setAttribute('aria-busy', String(refreshing));
+  $('refreshThreadMenu').setAttribute('aria-busy', String(refreshing));
 }
 
 async function refreshThreadFromSource(hostId = selected?.host, threadId = selected?.thread) {
@@ -8256,7 +8253,6 @@ $('renameThread').onclick = () => {
   $('renameThreadName').select();
 };
 
-$('refreshThread').onclick = () => void refreshThreadFromSource();
 $('locateProject').onclick = event => {
   if (selected) revealThreadProject(selected.host, selected.thread, event.isTrusted);
 };

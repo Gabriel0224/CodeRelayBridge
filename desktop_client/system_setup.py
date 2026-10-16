@@ -287,6 +287,26 @@ def is_admin():
         return bool(ctypes.windll.shell32.IsUserAnAdmin())
     return os.geteuid() == 0
 
+def prepare_authorization_result(path):
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 384)
+    with os.fdopen(fd, 'w', encoding='utf-8') as stream:
+        json.dump({'ok': False, 'pending': True}, stream)
+
+def read_authorization_result(path, exitcode):
+    try:
+        data = json.loads(Path(path).read_text(encoding='utf-8-sig'))
+    except PermissionError as exc:
+        raise ClientError('无法读取系统授权结果；配置可能已执行，请重新检测，不要反复授权') from exc
+    except (OSError, UnicodeError, ValueError) as exc:
+        raise ClientError('系统授权未返回完整结果；请重新检测端口与依赖') from exc
+    if not isinstance(data, dict) or data.get('pending'):
+        raise ClientError('系统授权未返回完整结果；请重新检测端口与依赖')
+    if data.get('ok') is not True:
+        raise ClientError(data.get('error') or '系统授权未完成，未宣称修复成功')
+    if exitcode:
+        raise ClientError('系统授权未完成，未宣称修复成功')
+    return data
+
 def repair(value, password=None):
     validate_plan(value)
     if not value.get('needsFirewall') and (not value.get('packages')):
@@ -298,6 +318,7 @@ def repair(value, password=None):
     with tempfile.TemporaryDirectory(prefix='relay-system-authorize-') as directory:
         source, result = (Path(directory) / 'plan.json', Path(directory) / 'result.json')
         source.write_text(json.dumps(value), encoding='utf-8')
+        prepare_authorization_result(result)
         args = [sys.executable, '--system-authorized', str(source), str(result)]
         if sys.platform == 'win32':
             import win32api, win32con, win32event, win32process
@@ -324,12 +345,7 @@ def repair(value, password=None):
                 raise ClientError('需要系统授权，请输入本机 sudo 密码；不会保存')
             exitcode = r.returncode
         password = None
-        if exitcode or not result.exists():
-            raise ClientError('系统授权未完成，未宣称修复成功')
-        data = json.loads(result.read_text(encoding='utf-8'))
-        if not data.get('ok'):
-            raise ClientError(data.get('error', '系统修复失败'))
-        return data
+        return read_authorization_result(result, exitcode)
 
 def authorized_main(source, result):
     try:

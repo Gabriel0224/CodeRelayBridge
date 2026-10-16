@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>CodeRelayBridge · 远程工作台</title>
+  <script src="/lite/reload.js" defer></script>
   <link rel="stylesheet" href="/lite/vendor/katex/katex.min.css">
   <link rel="stylesheet" href="/lite/vendor/xterm.css">
   <link rel="stylesheet" href="/lite/style.css">
@@ -19,6 +20,10 @@
   <script src="/lite/vendor/native-ui.js" defer></script>
 </head>
 <body>
+<div id="pageReloadRecovery" class="page-reload-recovery" role="status" hidden>
+  <span>页面未能完成加载，可以重载后重试。</span>
+  <button id="reloadPageFallback" class="secondary" type="button">↻ 重载</button>
+</div>
 <section id="login" hidden>
   <form id="loginForm">
     <div class="brand">◈ <span class="brand-label">CodeRelayBridge</span></div>
@@ -100,7 +105,7 @@
       </div>
       <div class="workspace-tools" aria-label="对话工具">
         <div class="workspace-tool-row">
-          <button id="refreshThread" class="secondary" data-icon="↻" aria-label="刷新对话" type="button" title="重新读取目标 App 的最新对话" disabled>↻ 刷新对话</button>
+          <button id="reloadPage" class="secondary" data-icon="↻" aria-label="重载" type="button" title="重新加载整个网页和最新界面资源，不重启服务或桌面 App">↻ 重载</button>
           <button id="trafficToggle" class="secondary" data-icon="↕" aria-label="流量" type="button" title="查看公网面板流量">↕ 流量</button>
           <button id="codexUpdatesToggle" class="secondary" data-icon="↑" type="button" hidden>↑ 软件更新</button>
           <button id="terminalToggle" class="secondary" data-icon="›_" aria-label="终端" type="button" title="打开当前电脑的终端">›_ 终端</button>

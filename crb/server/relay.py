@@ -46,6 +46,17 @@ SSH_TERMINAL_BUFFER_LIMIT = 2 * 1024 * 1024
 SSH_TERMINAL_READ_LIMIT = 128 * 1024
 MAX_SSH_TERMINALS = 24
 
+def page_reload_nonce(params):
+    values = params.get('_crb_reload', [])
+    value = values[0] if len(values) == 1 else ''
+    return value if re.fullmatch('[a-zA-Z0-9_-]{1,64}', value) else ''
+
+def page_reload_html(data, nonce):
+    """Only an explicit recovery navigation bypasses each local asset cache."""
+    if not nonce:
+        return data
+    return re.sub(b'((?:src|href)="/lite/[^"?]+)(")', lambda match: match[1] + b'?_crb_reload=' + nonce.encode('ascii') + match[2], data)
+
 def response_content_coding(accept_encoding, content_type='application/json'):
     """Negotiate standard HTTP compression without rewriting historical data.
 
@@ -829,12 +840,13 @@ def handler_factory(app):
                 self.wfile.write(body)
             self.count_public_traffic(len(body) if self.command != 'HEAD' else 0, count_request=True)
 
-        def lite_asset(self, data, content_type):
+        def lite_asset(self, data, content_type, force_reload=False):
             etag = '"' + hashlib.sha256(data).hexdigest()[:24] + '"'
             headers = {'ETag': etag}
-            if self.headers.get('If-None-Match') == etag:
-                return self.response(304, b'', content_type, headers, cache_control='public, max-age=0, must-revalidate')
-            return self.response(200, data, content_type, headers, cache_control='public, max-age=0, must-revalidate', compress=True)
+            cache_control = 'no-store' if force_reload else 'public, max-age=0, must-revalidate'
+            if not force_reload and self.headers.get('If-None-Match') == etag:
+                return self.response(304, b'', content_type, headers, cache_control=cache_control)
+            return self.response(200, data, content_type, headers, cache_control=cache_control, compress=True)
 
         def body(self):
             size = int(self.headers.get('Content-Length', '0'))
@@ -882,23 +894,24 @@ def handler_factory(app):
             try:
                 url = urlsplit(self.path)
                 path, params = (url.path, parse_qs(url.query))
+                reload_nonce = page_reload_nonce(params)
                 if path in ('/', '/lite', '/lite/'):
                     html = (web_root() / 'index.html').read_bytes()
-                    return self.lite_asset(html, 'text/html; charset=utf-8')
-                if path in ('/lite/app.js', '/lite/requests.js', '/lite/style.css', '/lite/i18n.js', '/lite/i18n-catalog.js'):
+                    return self.lite_asset(page_reload_html(html, reload_nonce), 'text/html; charset=utf-8', force_reload=bool(reload_nonce))
+                if path in ('/lite/app.js', '/lite/requests.js', '/lite/reload.js', '/lite/style.css', '/lite/i18n.js', '/lite/i18n-catalog.js'):
                     name = path.rsplit('/', 1)[-1]
                     asset = web_root() / name
                     if not asset.is_file():
                         return self.response(404, {'error': '没有找到此资源'})
                     mime = {'app.js': 'application/javascript', 'requests.js': 'application/javascript', 'style.css': 'text/css'}.get(name, 'application/javascript')
-                    return self.lite_asset(asset.read_bytes(), mime + '; charset=utf-8')
+                    return self.lite_asset(asset.read_bytes(), mime + '; charset=utf-8', force_reload=bool(reload_nonce))
                 if path.startswith('/lite/vendor/'):
                     vendor = (web_root() / path.removeprefix('/lite/')).resolve()
                     root = (web_root() / 'vendor').resolve()
                     if not vendor.is_relative_to(root) or not vendor.is_file():
                         return self.response(404, {'error': '没有找到此资源'})
                     mime = mimetypes.guess_type(vendor.name)[0] or 'application/octet-stream'
-                    return self.lite_asset(vendor.read_bytes(), mime)
+                    return self.lite_asset(vendor.read_bytes(), mime, force_reload=bool(reload_nonce))
                 if path in ('/app.js', '/requests.js', '/style.css') or path.startswith('/vendor/'):
                     return self.response(308, b'', 'text/plain; charset=utf-8', extra={'Location': '/lite' + path})
                 if path == '/healthz':
