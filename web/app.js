@@ -942,7 +942,7 @@ function renderQueuedMessages(messages, running, operable) {
       }
       const edit = document.createElement('button');
       edit.type = 'button';
-      edit.className = 'quiet';
+      edit.className = 'secondary queue-action';
       edit.textContent = '编辑';
       edit.disabled = busy || !operable;
       edit.onclick = () => {
@@ -953,14 +953,14 @@ function renderQueuedMessages(messages, running, operable) {
       };
       const steer = document.createElement('button');
       steer.type = 'button';
-      steer.className = 'secondary';
-      steer.textContent = running ? '修改方向' : '立即发送';
+      steer.className = 'secondary queue-action';
+      steer.textContent = running ? '引导' : '立即发送';
       steer.disabled = busy || !operable;
       steer.onclick = () => runQueueAction('queue_send_now',
         {messageId: message.id}, running ? '✓ 已介入当前任务' : '✓ 已立即发送');
       const remove = document.createElement('button');
       remove.type = 'button';
-      remove.className = 'quiet danger-text';
+      remove.className = 'secondary queue-action queue-delete danger-text';
       remove.textContent = '删除';
       remove.disabled = busy || !operable;
       remove.onclick = () => runQueueAction('queue_delete',
@@ -1340,6 +1340,7 @@ function setModelSettingsOpen(open) {
   const expanded = Boolean(open && !$('modelSettingsToggle').hidden);
   document.body.classList.toggle('composer-settings-open', expanded);
   $('modelSettingsToggle').setAttribute('aria-expanded', String(expanded));
+  $('quickSpeed').setAttribute('aria-expanded', String(expanded));
   $('modelControls').hidden = !expanded;
 }
 
@@ -2588,8 +2589,6 @@ function syncSidebarSelectors() {
   }
   
   $('nativeSettingsToggle').hidden = !host || host.capabilities?.nativeSettings === false;
-  $('subagentsToggle').hidden = !host || applicationId(host) !== 'codex' ||
-    !host.threads?.some(thread => typeof thread.isSubagent === 'boolean');
   if (terminalPanelOpen && terminalView === 'agents') renderSubagents();
   window.NativePanel?.syncCapabilities();
   $('archiveFilter').value = archiveFilter;
@@ -3210,6 +3209,7 @@ function clearThread() {
   $('queuedMessages').hidden = true;
   $('attachThread').hidden = true;
   $('modelSettingsToggle').hidden = true;
+  $('quickSpeed').hidden = true;
   $('fullAccess').closest('label').hidden = true;
   $('fullAccess').disabled = true;
   setModelSettingsOpen(false);
@@ -4994,15 +4994,21 @@ function populateEfforts(modelId, desired) {
 function populateServiceTiers(modelId, desired = 'default') {
   const host = currentHost();
   const model = host?.models.find(item => item.id === modelId);
-  const tiers = applicationId(host) === 'codex' ? (model?.serviceTiers || []) : [];
-  const shown = tiers.some(tier => tier.id !== 'default');
-  for (const id of ['speedSelect', 'speedLabel', 'speedUsageNote']) $(id).hidden = !shown;
+  const codex = applicationId(host) === 'codex';
+  const tiers = codex && Array.isArray(model?.serviceTiers) ? model.serviceTiers : [];
+  const available = tiers.some(tier => tier.id !== 'default');
+  for (const id of ['speedSelect', 'speedLabel', 'speedUsageNote']) $(id).hidden = !codex;
+  $('speedUsageNote').textContent = !tiers.length ?
+    '目标客户端未提供速度选项；请更新目标电脑的 CRB 客户端后重试。' : available ?
+      '加速模式会增加额度消耗；实际可用性由原 App 决定。' : '此模型未提供加速模式。';
   const label = tier => tier.id === 'default' ? '标准' :
     ['priority', 'fast'].includes(tier.id) ? '⚡ 加速' :
       tier.id === 'ultrafast' ? '⚡ 极速' : tier.name || tier.id;
   const matching = tiers.some(tier => tier.id === desired) ? desired :
     ['priority', 'fast'].includes(desired) ? tiers.find(tier => ['priority', 'fast'].includes(tier.id))?.id : '';
-  setOptions($('speedSelect'), tiers.map(tier => ({value: tier.id, label: label(tier), title: tier.description})), matching || 'default');
+  setOptions($('speedSelect'), tiers.length ? tiers.map(tier => ({value: tier.id, label: label(tier), title: tier.description})) :
+    [{value: '', label: '未提供速度选项'}], matching || (tiers.length ? 'default' : ''));
+  $('speedSelect').disabled = !available || busy || threadPreviewOnly || !host?.online || Boolean(selectedThread()?.archived);
 }
 
 function populateNewThreadEfforts(desired) {
@@ -5139,6 +5145,7 @@ function syncThreadControls() {
   syncManualThreadRefreshButton();
   if (!meta || !host) {
     $('modelSettingsToggle').hidden = true;
+    $('quickSpeed').hidden = true;
     setModelSettingsOpen(false);
     $('fullAccess').closest('label').hidden = true;
     $('fullAccess').disabled = true;
@@ -5151,6 +5158,8 @@ function syncThreadControls() {
     models.push({id: activeModel, label: activeModel, efforts: []});
   }
   $('modelSettingsToggle').hidden = !models.length;
+  $('quickSpeed').hidden = applicationId(host) !== 'codex' || !models.length;
+  $('quickSpeed').disabled = busy || threadPreviewOnly || !host.online || Boolean(meta.archived);
   if (!models.length) setModelSettingsOpen(false);
   if (models.length) {
     const modelLabel = models.find(model => model.id === activeModel)?.label || activeModel || '未设置模型';
@@ -5162,6 +5171,8 @@ function syncThreadControls() {
     const tier = applicationId(host) === 'codex' ? (current?.serviceTier || 'default') : 'default';
     const speedBadge = document.createElement('span');
     speedBadge.textContent = tier === 'ultrafast' ? ' · ⚡ 极速' : ['priority', 'fast'].includes(tier) ? ' · ⚡ 加速' : '';
+    $('quickSpeedLabel').textContent = speedBadge.textContent ? '加速已开' : '闪电加速';
+    $('quickSpeed').classList.toggle('active', Boolean(speedBadge.textContent));
     $('modelSettingsSummary').replaceChildren(modelName, document.createTextNode(' · '), effortNameLabel, speedBadge);
     $('modelSettingsToggle').title = '展开模型与推理设置';
     $('modelControls').hidden = !document.body.classList.contains('composer-settings-open');
@@ -5172,7 +5183,8 @@ function syncThreadControls() {
     if (!modelDirty) populateEfforts($('modelSelect').value,
       current?.reasoningEffort || meta.reasoningEffort);
     if (!modelDirty) populateServiceTiers($('modelSelect').value, current?.serviceTier || 'default');
-    $('speedSelect').disabled = busy || threadPreviewOnly || !host.online || meta.archived;
+    $('speedSelect').disabled = busy || threadPreviewOnly || !host.online || meta.archived ||
+      !host.models.find(model => model.id === $('modelSelect').value)?.serviceTiers?.some(tier => tier.id !== 'default');
     $('modelSelect').disabled = busy || threadPreviewOnly || !host.online || meta.archived;
     $('effortSelect').disabled = busy || threadPreviewOnly || !host.online || meta.archived;
     $('applySettings').disabled = busy || threadPreviewOnly || !host.online || meta.archived ||
@@ -6705,6 +6717,7 @@ function renderTerminalTabs() {
 
 function showTerminalPanel() {
   terminalPanelOpen = true;
+  $('extensionsToggle').setAttribute('aria-expanded', 'true');
   $('terminalPanel').hidden = false;
   $('terminalResizer').hidden = mobileQuery.matches;
   document.body.classList.add('terminal-open');
@@ -6736,6 +6749,7 @@ function hideTerminalPanel() {
   closeTerminalContextMenu();
   closeFileContextMenu();
   terminalPanelOpen = false;
+  $('extensionsToggle').setAttribute('aria-expanded', 'false');
   clearInterval(terminalListTimer);
   terminalListTimer = null;
   $('terminalPanel').hidden = true;
@@ -6942,16 +6956,29 @@ async function pollActiveTerminal() {
 function syncTerminalControls() {
   const selector = $('terminalHostSelect');
   const previous = selector.value;
-  const available = catalog.filter(host => host.terminal?.supported && physicalHostId(host) === host.id);
+  const available = catalog.filter(host => physicalHostId(host) === host.id &&
+    (host.terminal?.supported || (applicationId(host) === 'codex' && host.threads?.some(thread => typeof thread.isSubagent === 'boolean'))));
   const preferred = previous && available.some(host => host.id === previous) ? previous :
     (available.some(host => host.id === physicalHostId()) ? physicalHostId() : available[0]?.id || '');
   setOptions(selector, available.map(host => ({
-    value: host.id, label: `${host.label} · SSH`
+    value: host.id, label: `${host.label} · ${host.terminal?.supported ? 'SSH' : uiText('子智能体')}`
   })), preferred);
   const host = available.find(item => item.id === selector.value);
-  const enabled = Boolean(host && !busy);
-  $('terminalToggle').disabled = !available.length;
-  $('fileManagerToggle').disabled = !available.length;
+  const enabled = Boolean(host?.terminal?.supported && !busy);
+  const agentsAvailable = applicationId(currentHost()) !== 'deepseek' && applicationId(host) === 'codex' &&
+    host?.threads?.some(thread => typeof thread.isSubagent === 'boolean');
+  $('extensionsToggle').disabled = !available.length;
+  $('terminalModeAgents').hidden = !agentsAvailable;
+  $('terminalModeTerminal').disabled = !host?.terminal?.supported;
+  $('terminalModeFiles').disabled = !host?.terminal?.supported;
+  const previousView = terminalView;
+  if (agentsAvailable && !host?.terminal?.supported) terminalView = 'agents';
+  else if (!agentsAvailable && terminalView === 'agents') terminalView = host?.terminal?.supported ? 'files' : 'terminal';
+  if (terminalView !== previousView) {
+    applyTerminalView();
+    syncTerminalPanelPolling();
+    if (terminalPanelOpen && terminalView === 'files') syncFileDirectoryContext();
+  }
   $('newTerminal').disabled = !enabled;
   $('terminalEmptyCreate').disabled = !enabled;
   $('newTerminal').title = enabled ? `通过 SSH 连接 ${host.label}` : '没有可用的 SSH 目标';
@@ -7630,44 +7657,33 @@ $('softwarePasswordForm').onsubmit = event => {
 ;
 ;
 ;
-$('terminalToggle').onclick = async () => {
+$('extensionsToggle').onclick = async () => {
   if (terminalPanelOpen) hideTerminalPanel();
   else {
+    if ([...$('terminalHostSelect').options].some(option => option.value === physicalHostId())) {
+      $('terminalHostSelect').value = physicalHostId();
+    }
+    syncTerminalControls();
+    const host = catalog.find(item => item.id === $('terminalHostSelect').value);
+    if (!host?.terminal?.supported && !$('terminalModeAgents').hidden) terminalView = 'agents';
+    else if (terminalView === 'agents' && $('terminalModeAgents').hidden) terminalView = 'files';
     showTerminalPanel();
+    if (terminalView === 'agents') return;
+    if (terminalView === 'files') {
+      const hostId = $('terminalHostSelect').value;
+      if (hostId) {void ensureFileTreeRoots(hostId); syncFileDirectoryContext();}
+      return;
+    }
     try { await syncServerTerminals(); }
     catch (error) {
       setTerminalStatus(`无法同步已开启的终端：${error.message}`, true);
       return;
     }
-    if (terminalView === 'files') {
-      const hostId = $('terminalHostSelect').value;
-      if (hostId) syncFileDirectoryContext();
-    } else if (activeTerminalId && terminalSessions.has(activeTerminalId)) {
+    if (activeTerminalId && terminalSessions.has(activeTerminalId)) {
       activateTerminal(activeTerminalId);
     } else if (terminalSessions.size) {
       activateTerminal([...terminalSessions.keys()].at(-1));
-    } else {
-      if ([...$('terminalHostSelect').options].some(option => option.value === physicalHostId())) {
-        $('terminalHostSelect').value = physicalHostId();
-      }
-      startTerminal();
     }
-  }
-};
-$('fileManagerToggle').onclick = () => {
-  if (terminalPanelOpen && terminalView === 'files') {
-    hideTerminalPanel();
-    return;
-  }
-  if ([...$('terminalHostSelect').options].some(option => option.value === physicalHostId())) {
-    $('terminalHostSelect').value = physicalHostId();
-  }
-  terminalView = 'files';
-  showTerminalPanel();
-  const hostId = $('terminalHostSelect').value;
-  if (hostId) {
-    void ensureFileTreeRoots(hostId);
-    syncFileDirectoryContext(true);
   }
 };
 $('newTerminal').onclick = startTerminal;
@@ -7677,13 +7693,6 @@ $('terminalModeTerminal').onclick = () => setTerminalView('terminal');
 $('terminalModeFiles').onclick = () => setTerminalView('files');
 $('terminalModeAgents').onclick = () => setTerminalView('agents');
 $('subagentScope').onchange = renderSubagents;
-$('subagentsToggle').onclick = () => {
-  if (terminalPanelOpen && terminalView === 'agents') {hideTerminalPanel(); return;}
-  const physical = physicalHostId();
-  if ([...$('terminalHostSelect').options].some(option => option.value === physical)) $('terminalHostSelect').value = physical;
-  terminalView = 'agents';
-  showTerminalPanel();
-};
 $('fileTreeToggle').onclick = () => {
   fileTreeOpen = !fileTreeOpen;
   applyFileTreeLayout();
@@ -7901,6 +7910,11 @@ $('mobileBackdrop').onclick = closeMobilePanels;
 $('sidebarClose').onclick = closeMobilePanels;
 $('modelSettingsToggle').onclick = () => {
   setModelSettingsOpen(!document.body.classList.contains('composer-settings-open'));
+};
+$('quickSpeed').onclick = () => {
+  setModelSettingsOpen(true);
+  if (!$('speedSelect').disabled) $('speedSelect').focus({preventScroll: true});
+  else $('speedUsageNote').scrollIntoView({block: 'nearest'});
 };
 mobileQuery.addEventListener('change', syncMobileLayout);
 installMobileSidebarScrollGuard();

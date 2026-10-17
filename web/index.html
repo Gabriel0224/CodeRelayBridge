@@ -107,15 +107,13 @@
       <div class="workspace-tools" aria-label="对话工具">
         <div class="workspace-tool-row">
           <button id="reloadPage" class="secondary" data-icon="↻" aria-label="重载" type="button" title="重新加载整个网页和最新界面资源，不重启服务或桌面 App">↻ 重载</button>
-          <button id="trafficToggle" class="secondary" data-icon="↕" aria-label="流量" type="button" title="查看公网面板流量">↕ 流量</button>
-          <button id="codexUpdatesToggle" class="secondary" data-icon="↑" type="button" hidden>↑ 软件更新</button>
-          <button id="terminalToggle" class="secondary" data-icon="›_" aria-label="终端" type="button" title="打开当前电脑的终端">›_ 终端</button>
-        </div>
-        <div class="workspace-tool-row">
-          <button id="fileManagerToggle" class="secondary" data-icon="▤" aria-label="文件" type="button" title="浏览当前电脑的文件">▤ 文件</button>
-          <button id="subagentsToggle" class="secondary" data-icon="⑂" aria-label="子智能体" type="button" title="查看原 App 的子智能体" hidden>⑂ 子智能体</button>
+          <button id="extensionsToggle" class="secondary" data-icon="⊞" aria-label="扩展" type="button" aria-expanded="false" aria-controls="terminalPanel" title="打开文件、终端与子智能体"><span aria-hidden="true">⊞</span><span>扩展</span></button>
           <button id="nativeSettingsToggle" class="secondary" data-icon="⚙" aria-label="设置" type="button" title="管理当前对话的原生功能">⚙ 设置</button>
           <button id="filePreviewToggle" class="secondary" data-icon="▣" aria-label="预览文件" type="button" title="重新打开已预览的文件" disabled>▣ 预览 <span id="filePreviewCount">0</span></button>
+        </div>
+        <div class="workspace-tool-row">
+          <button id="trafficToggle" class="secondary" data-icon="↕" aria-label="流量" type="button" title="查看公网面板流量">↕ 流量</button>
+          <button id="codexUpdatesToggle" class="secondary" data-icon="↑" type="button" hidden>↑ 软件更新</button>
           <label class="font-size-control" for="fontSize">
             <span>A</span><input id="fontSize" type="range" min="5" max="32" step="1" value="13"><output id="fontSizeValue" for="fontSize">13</output>
           </label>
@@ -139,6 +137,7 @@
       <div class="composer-top">
         <div class="composer-settings-bar">
           <button id="modelSettingsToggle" class="model-settings-toggle" type="button" aria-expanded="false" aria-controls="modelControls" hidden><span id="modelSettingsSummary">当前模型 · 推理档位</span><span class="settings-chevron" aria-hidden="true">⌄</span></button>
+          <button id="quickSpeed" class="secondary quick-speed" type="button" aria-expanded="false" aria-controls="modelControls" title="查看闪电加速设置" hidden><span aria-hidden="true">⚡</span><span id="quickSpeedLabel">闪电加速</span></button>
           <label class="permission-switch" for="fullAccess" title="控制原 Codex 对话后续轮次的文件、命令与网络访问权限" hidden>
             <input id="fullAccess" type="checkbox"><span>完全访问</span>
           </label>

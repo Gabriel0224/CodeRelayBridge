@@ -351,10 +351,11 @@ header {
   border-bottom: 1px solid var(--theme-surface-24292b, #24292b);
   padding: 12px 24px;
 }
-.workspace-tools { width: min(400px, 52cqw); max-width: 100%; min-width: 0; display: grid; grid-template-rows: auto auto; gap: 6px; }
-.workspace-tool-row { min-width: 0; display: flex; flex-wrap: nowrap; justify-content: safe flex-end; align-items: center; gap: 6px; overflow-x: auto; scrollbar-width: none; }
-.workspace-tool-row::-webkit-scrollbar { display: none; }
-.workspace-tool-row > button { flex: none; min-height: 31px; padding: 5px 9px; font-size: max(5px, calc(10px * var(--ui-font-scale))); white-space: nowrap; }
+.workspace-tools { width: min(380px, 48cqw); max-width: 100%; min-width: 0; display: grid; grid-template-rows: auto auto; gap: 6px; }
+.workspace-tool-row { min-width: 0; display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 6px; overflow: visible; }
+.workspace-tool-row > button { flex: none; max-width: 100%; min-height: 31px; padding: 5px 9px; font-size: max(5px, calc(10px * var(--ui-font-scale))); white-space: nowrap; }
+#extensionsToggle { display: inline-flex; align-items: center; justify-content: center; gap: 4px; }
+#extensionsToggle[aria-expanded="true"] { border-color: var(--accent); }
 .workspace-tool-row .font-size-control { flex: none; }
 .font-size-control {
   display: flex;
@@ -945,7 +946,9 @@ html[data-theme="light"] .message-retry:hover:not(:disabled) { background: var(-
   padding: 11px max(18px, calc((100% - 1440px) / 2)) 16px;
 }
 .composer-top { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin-bottom: 8px; }
-.composer-settings-bar { display: flex; flex: 1 0 100%; grid-column: 1 / -1; min-width: 0; align-items: center; gap: 10px; }
+.composer-settings-bar { display: flex; flex-wrap: wrap; flex: 1 0 100%; grid-column: 1 / -1; min-width: 0; align-items: center; gap: 10px; }
+.quick-speed { display: inline-flex; align-items: center; gap: 4px; flex: none; min-height: 32px; padding: 5px 9px; font-size: max(5px, calc(11px * var(--ui-font-scale))); }
+.quick-speed.active { border-color: var(--accent); }
 .model-settings-toggle {
   display: inline-flex;
   min-width: 0;
@@ -1081,7 +1084,9 @@ html[data-theme="light"] .message-retry:hover:not(:disabled) { background: var(-
   white-space: nowrap;
 }
 .queue-paused { margin-top: 4px; color: #e0a18f; font-size: max(5px, calc(9px * var(--ui-font-scale))); }
-.queue-actions { display: flex; align-items: center; gap: 4px; }
+.queue-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 5px; }
+.queue-actions .queue-action { border-radius: 999px; min-height: 29px; padding: 5px 10px; }
+.queue-actions .queue-delete { border-color: currentColor; }
 .queue-actions button, .queue-editor-actions button {
   min-height: 26px;
   padding: 4px 7px;
@@ -1803,8 +1808,11 @@ html[data-theme="light"] .terminal-context-box textarea { background: #fff; colo
     gap: 4px;
   }
   body:not(.mobile-layout) .workspace-tool-row { gap: 4px; }
-  body:not(.mobile-layout) .workspace-tool-row > button { width: 36px; min-width: 36px; min-height: 32px; padding: 0; font-size: 0; }
+  body:not(.mobile-layout) .workspace-tool-row > button { width: max(36px, calc(20px * var(--ui-font-scale))); min-width: max(36px, calc(20px * var(--ui-font-scale))); min-height: max(32px, calc(22px * var(--ui-font-scale))); padding: 0; font-size: 0; }
   body:not(.mobile-layout) .workspace-tool-row > button::before { content: attr(data-icon); font-size: max(5px, calc(15px * var(--ui-font-scale))); line-height: 1; }
+  body:not(.mobile-layout) #extensionsToggle { width: auto; min-width: 56px; padding: 0 5px; font-size: max(5px, calc(10px * var(--ui-font-scale))); white-space: normal; }
+  body:not(.mobile-layout) #extensionsToggle span { min-width: 0; overflow-wrap: anywhere; }
+  body:not(.mobile-layout) #extensionsToggle::before { content: none; }
   body:not(.mobile-layout) #filePreviewToggle { width: auto; padding: 0 3px; }
   body:not(.mobile-layout) #filePreviewCount { font-size: max(5px, calc(10px * var(--ui-font-scale))); }
   body:not(.mobile-layout) .workspace-tool-row .font-size-control input { width: 52px; }
@@ -1905,13 +1913,15 @@ html[data-theme="light"] .mobile-layout .sidebar-close { border-color: var(--the
 .mobile-layout #locateProject { min-width: 28px; min-height: 28px; padding: 5px; }
 .mobile-layout #locateProject span { display: none; }
 .mobile-layout .status { max-width: 72px; overflow: hidden; padding: 3px 7px; font-size: max(5px, calc(9px * var(--ui-font-scale))); text-overflow: ellipsis; }
-.mobile-layout .workspace-tools { width: min(176px, 52cqw); gap: 4px; }
+.mobile-layout .workspace-tools { width: min(184px, 52cqw); gap: 4px; }
 .mobile-layout .workspace-tool-row { gap: 4px; }
-.mobile-layout .workspace-tool-row > button { width: 36px; min-width: 36px; min-height: 36px; padding: 0; font-size: 0; }
+.mobile-layout .workspace-tool-row > button { width: max(36px, calc(20px * var(--ui-font-scale))); min-width: max(36px, calc(20px * var(--ui-font-scale))); min-height: max(36px, calc(22px * var(--ui-font-scale))); padding: 0; font-size: 0; }
 .mobile-layout .workspace-tool-row > button::before { content: attr(data-icon); font-size: max(5px, calc(15px * var(--ui-font-scale))); line-height: 1; }
 .mobile-layout .workspace-tools .font-size-control,
 .mobile-layout #layoutReset { display: none; }
-.mobile-layout #terminalToggle::before { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: max(5px, calc(13px * var(--ui-font-scale))); }
+.mobile-layout #extensionsToggle { width: auto; min-width: 56px; min-height: max(36px, calc(22px * var(--ui-font-scale))); padding: 0 5px; font-size: max(5px, calc(10px * var(--ui-font-scale))); white-space: normal; }
+.mobile-layout #extensionsToggle span { min-width: 0; overflow-wrap: anywhere; }
+.mobile-layout #extensionsToggle::before { content: none; }
 #panelRestartDialog label { display: flex; align-items: flex-start; gap: 8px; margin: 14px 0; }
 #panelRestartDialog input[type="radio"] { flex: none; width: 14px; height: 14px; min-height: 0; padding: 0; margin: 2px 0; }
 #panelRestartStatus { min-height: 22px; overflow-wrap: anywhere; }

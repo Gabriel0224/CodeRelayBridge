@@ -1,9 +1,10 @@
-"""Signed GitHub releases for both clients and the universal server.
+"""Signed release transports and native package validation.
 
 No embedded credentials, TLS exceptions, shell downloads or silent installs.
 """
 import base64
 import hashlib
+import http.client
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -29,8 +30,15 @@ MANIFEST_NAME = 'crb-update-v3.json'
 MAX_ARCHIVE = 2 * 1024 ** 3
 MAX_EXPANDED = 4 * 1024 ** 3
 DOWNLOAD_HOSTS = {'api.github.com', 'github.com', 'release-assets.githubusercontent.com', 'objects.githubusercontent.com'}
+GITEE_DOWNLOAD_HOSTS = {'gitee.com', 'foruda.gitee.com', 'cn-assets.gitee.com'}
 
 class UpdateError(RuntimeError):
+    pass
+
+class UpdateTransportError(UpdateError):
+    """Only network/provider failures may use a verified alternative mirror."""
+
+class UpdateCancelled(UpdateError):
     pass
 
 def canonical(payload):
@@ -57,60 +65,93 @@ def repository(role, client_edition):
         raise UpdateError('程序版本类型无效。')
     return OWNER + '/' + PUBLIC_REPO
 
-def validate_url(url, api_only=False):
-    parsed = urllib.parse.urlsplit(url)
-    allowed = {'api.github.com'} if api_only else DOWNLOAD_HOSTS
-    if parsed.scheme != 'https' or parsed.hostname not in allowed or parsed.username or parsed.password or (parsed.port not in (None, 443)) or parsed.fragment:
-        raise UpdateError('更新地址不属于受信任的 GitHub HTTPS 地址。')
+def validate_url(url, api_only=False, channel='github'):
+    try:
+        parsed = urllib.parse.urlsplit(url)
+        port = parsed.port
+    except (TypeError, ValueError):
+        raise UpdateError('更新地址不属于当前通道的受信任 HTTPS 地址。') from None
+    if channel not in ('github', 'gitee'):
+        raise UpdateError('更新通道无效。')
+    allowed = ({'api.github.com'} if api_only else DOWNLOAD_HOSTS) if channel == 'github' else {'gitee.com'} if api_only else GITEE_DOWNLOAD_HOSTS
+    if parsed.scheme != 'https' or parsed.hostname not in allowed or parsed.username or parsed.password or (port not in (None, 443)) or parsed.fragment:
+        raise UpdateError('更新地址不属于当前通道的受信任 HTTPS 地址。')
+    if api_only and channel == 'gitee' and (not parsed.path.startswith('/api/v5/')):
+        raise UpdateError('更新地址不属于当前通道的受信任 HTTPS 地址。')
     return parsed
 
 class SafeRedirect(urllib.request.HTTPRedirectHandler):
 
+    def __init__(self, channel='github'):
+        super().__init__()
+        self.channel = channel
+
     def redirect_request(self, req, fp, code, msg, headers, newurl):
-        validate_url(newurl)
+        validate_url(newurl, channel=self.channel)
         redirected = super().redirect_request(req, fp, code, msg, headers, newurl)
         if redirected:
-            redirected.remove_header('Authorization')
+            for name, _ in list(redirected.header_items()):
+                if name.lower() in ('authorization', 'proxy-authorization', 'cookie'):
+                    redirected.remove_header(name)
         return redirected
 
 class GitHubHTTP:
 
-    def __init__(self, token='', timeout=15):
+    def __init__(self, token='', timeout=15, channel='github'):
+        if channel not in ('github', 'gitee'):
+            raise UpdateError('更新通道无效。')
         self._token = token
         self.timeout = timeout
-        self.opener = urllib.request.build_opener(SafeRedirect())
+        self.channel = channel
+        self.opener = urllib.request.build_opener(SafeRedirect(channel))
 
-    def open(self, url, *, binary=False):
-        parsed = validate_url(url)
-        headers = {'Accept': 'application/octet-stream' if binary else 'application/vnd.github+json', 'User-Agent': 'CodeRelayBridge-Updater/' + VERSION}
-        if self._token and parsed.hostname == 'api.github.com':
+    def open(self, url, *, binary=False, byte_range=None, timeout=None):
+        parsed = validate_url(url, channel=self.channel)
+        headers = {'Accept': 'application/octet-stream' if binary else 'application/vnd.github+json' if self.channel == 'github' else 'application/json', 'User-Agent': 'CodeRelayBridge-Updater/' + VERSION}
+        if byte_range is not None:
+            if type(byte_range) is not int or not 0 < byte_range <= 256 * 1024:
+                raise UpdateError('更新测速范围无效。')
+            headers['Range'] = 'bytes=0-' + str(byte_range - 1)
+        if self._token and self.channel == 'github' and (parsed.hostname == 'api.github.com'):
             headers['Authorization'] = 'Bearer ' + self._token
+        if self._token and self.channel == 'gitee' and (parsed.hostname == 'gitee.com') and parsed.path.startswith('/api/v5/'):
+            headers['Authorization'] = 'token ' + self._token
         try:
-            return self.opener.open(urllib.request.Request(url, headers=headers), timeout=self.timeout)
+            return self.opener.open(urllib.request.Request(url, headers=headers), timeout=self.timeout if timeout is None else timeout)
         except urllib.error.HTTPError as error:
+            provider = 'GitHub' if self.channel == 'github' else 'Gitee'
             if error.code in (401, 403):
-                raise UpdateError('GitHub 授权无效、权限不足或请求额度受限；请检查访问令牌。') from None
+                raise UpdateTransportError(provider + ' 授权无效、权限不足或请求额度受限；请检查访问令牌。') from None
             if error.code == 404:
-                raise UpdateError('仓库尚无正式 Release，或当前账号没有私有仓库读取权限。') from None
-            raise UpdateError('GitHub 请求失败（HTTP ' + str(error.code) + '）。') from None
+                raise UpdateTransportError('仓库尚无正式 Release，或当前账号没有私有仓库读取权限。') from None
+            raise UpdateTransportError(provider + ' 请求失败（HTTP ' + str(error.code) + '）。') from None
         except UpdateError:
             raise
         except Exception as error:
-            raise UpdateError('连接 GitHub 失败（' + type(error).__name__ + '）；原程序未改变。') from None
+            provider = 'GitHub' if self.channel == 'github' else 'Gitee'
+            raise UpdateTransportError('连接 ' + provider + ' 失败（' + type(error).__name__ + '）；原程序未改变。') from None
 
     def json(self, url, *, binary=False, limit=1024 * 1024):
-        with self.open(url, binary=binary) as response:
-            data = response.read(limit + 1)
+        try:
+            with self.open(url, binary=binary) as response:
+                data = response.read(limit + 1)
+        except (OSError, EOFError, http.client.HTTPException):
+            raise UpdateTransportError('更新元数据连接中断，请重新检查更新。') from None
         if len(data) > limit:
             raise UpdateError('更新元数据超过允许大小。')
         try:
             return json.loads(data)
         except (ValueError, UnicodeError):
-            raise UpdateError('GitHub 返回了无效的更新元数据。') from None
+            raise UpdateError('通道返回了无效的更新元数据。') from None
 
 class TokenStore:
     """Explicit platform backend; never fall back to a plaintext keyring."""
     service = 'CodeRelayBridge-GitHub-Updates'
+
+    def __init__(self, channel='github'):
+        if channel not in ('github', 'gitee'):
+            raise UpdateError('更新通道无效。')
+        self.service = {'github': 'CodeRelayBridge-GitHub-Updates', 'gitee': 'CodeRelayBridge-Gitee-Updates'}[channel]
 
     def backend(self):
         if sys.platform == 'win32':
@@ -281,16 +322,27 @@ def validate_identity(root, role, client_edition):
     if identity != {'role': role, 'edition': client_edition} or not package_executable(root, role).is_file():
         raise UpdateError('更新包不属于当前程序或版本类型，拒绝替换。')
 
+def validate_macos_version(package):
+    if sys.platform == 'darwin' and package.get('minimumMacOS'):
+        installed = tuple(map(int, platform.mac_ver()[0].split('.')))
+        required = tuple(map(int, package['minimumMacOS'].split('.')))
+        if installed < required:
+            raise UpdateError('此更新需要 macOS ' + package['minimumMacOS'] + ' 或更高版本。')
+
 class ReleaseUpdater:
 
-    def __init__(self, role='client', client_edition=None, http=None, current_version=VERSION):
+    def __init__(self, role='client', client_edition=None, http=None, current_version=VERSION, channel='github'):
         self.role = role
         self.edition = client_edition or edition()
         self.repo = repository(role, self.edition)
         self.current = current_version
-        self.http = http or GitHubHTTP()
+        self.channel = channel
+        self.http = http or GitHubHTTP(channel=channel)
 
     def check(self):
+        if self.channel == 'gitee':
+            from desktop_client.update_channels import check_gitee
+            return check_gitee(self)
         release = self.http.json('https://api.github.com/repos/' + self.repo + '/releases/latest')
         if release.get('draft') or release.get('prerelease'):
             raise UpdateError('不自动安装草稿或预发布版本。')
@@ -318,20 +370,28 @@ class ReleaseUpdater:
         validate_url(selected[0]['url'], api_only=True)
         if not selected[0]['url'].startswith('https://api.github.com/repos/' + self.repo + '/releases/assets/'):
             raise UpdateError('安装包附件来自不匹配的仓库。')
-        if sys.platform == 'darwin' and package.get('minimumMacOS'):
-            installed = tuple(map(int, platform.mac_ver()[0].split('.')))
-            required = tuple(map(int, package['minimumMacOS'].split('.')))
-            if installed < required:
-                raise UpdateError('此更新需要 macOS ' + package['minimumMacOS'] + ' 或更高版本。')
-        return {'available': True, 'current': self.current, 'latest': payload['version'], 'repository': self.repo, 'package': package, 'assetUrl': selected[0]['url'], 'manifest': envelope}
+        validate_macos_version(package)
+        return {'available': True, 'current': self.current, 'latest': payload['version'], 'repository': self.repo, 'package': package, 'assetUrl': selected[0]['url'], 'manifest': envelope, 'channel': 'github'}
 
-    def prepare(self, release, progress=None):
+    def prepare(self, release, progress=None, *, cancelled=None, status=None):
         if not release.get('available'):
             raise UpdateError('没有可安装的新版本。')
         payload = verify_manifest(release['manifest'], self.repo)
         package = release['package']
         if package not in payload['packages'] or package['edition'] != self.edition or package['role'] != self.role or (package['platform'] != platform_id()) or (version_tuple(payload['version']) <= version_tuple(self.current)):
             raise UpdateError('更新包选择不匹配。')
+        if release.get('channel', 'github') != self.channel:
+            raise UpdateError('更新包通道不匹配。')
+        validate_url(release['assetUrl'], api_only=True, channel=self.channel)
+        prefix = 'https://api.github.com/repos/' + self.repo + '/releases/assets/' if self.channel == 'github' else 'https://gitee.com/api/v5/repos/' + self.repo.split('/')[0].lower() + '/' + self.repo.split('/')[1] + '/releases/'
+        suffix = release['assetUrl'].removeprefix(prefix)
+        if not release['assetUrl'].startswith(prefix) or not re.fullmatch('[0-9]+' if self.channel == 'github' else '[0-9]+/attach_files/[0-9]+/download', suffix):
+            raise UpdateError('安装包附件来自不匹配的仓库。')
+
+        def checkpoint():
+            if cancelled and cancelled():
+                raise UpdateCancelled('更新已取消，原程序未改变。')
+        checkpoint()
         root = data_root('CodexRelayClient' if self.role == 'client' else 'CodexRelayServer')
         cache = root / 'updates'
         cache.mkdir(parents=True, exist_ok=True)
@@ -343,18 +403,41 @@ class ReleaseUpdater:
         work.mkdir(mode=448)
         archive = work / package['file']
         received = 0
-        with self.http.open(release['assetUrl'], binary=True) as response, archive.open('xb') as out:
-            while True:
-                data = response.read(256 * 1024)
-                if not data:
-                    break
-                received += len(data)
-                if received > package['bytes']:
-                    raise UpdateError('GitHub 下载大小超过签名清单限制。')
-                out.write(data)
-                if progress:
-                    progress(received, package['bytes'])
-        verify_file(archive, package['bytes'], package['sha256'])
-        candidate = extract_package(archive, work, self.role)
-        validate_identity(candidate, self.role, self.edition)
-        return {'work': str(work), 'archive': str(archive), 'candidate': str(candidate), 'role': self.role, 'edition': self.edition, 'release': release}
+        try:
+            checkpoint()
+            if status:
+                status('download')
+            with self.http.open(release['assetUrl'], binary=True) as response, archive.open('xb') as out:
+                while True:
+                    checkpoint()
+                    try:
+                        data = response.read(256 * 1024)
+                    except (OSError, EOFError, http.client.HTTPException):
+                        raise UpdateTransportError('下载连接中断，原程序未改变。') from None
+                    if not data:
+                        break
+                    received += len(data)
+                    if received > package['bytes']:
+                        raise UpdateError('下载大小超过签名清单限制。')
+                    out.write(data)
+                    if progress:
+                        progress(received, package['bytes'])
+            checkpoint()
+            if received < package['bytes']:
+                raise UpdateTransportError('安装包下载未完成，原程序未改变。')
+            if status:
+                status('verify')
+            verify_file(archive, package['bytes'], package['sha256'])
+            checkpoint()
+            if status:
+                status('extract')
+            candidate = extract_package(archive, work, self.role)
+            validate_identity(candidate, self.role, self.edition)
+            checkpoint()
+            if status:
+                status('ready')
+            return {'work': str(work), 'archive': str(archive), 'candidate': str(candidate), 'role': self.role, 'edition': self.edition, 'release': release}
+        except Exception:
+            if work.parent.resolve() == cache.resolve() and (not work.is_symlink()):
+                shutil.rmtree(work)
+            raise

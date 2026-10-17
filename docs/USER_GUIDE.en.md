@@ -209,9 +209,13 @@ CRB cannot fix unauthorized members, missing Managed IPv4 addresses, the wrong N
 
 ### Updating
 
-Click **“检查 CRB 更新”** (Check CRB updates) in the client/server UI. Verify platform, role and edition before confirming installation. The updater checks a signed manifest, size and SHA-256. Relay connections and panel terminals disconnect briefly; original model App tasks should not be stopped.
+1. Click **Check for CRB updates** in the client or server UI.
+2. Select **Automatic (limited speed test)**, **GitHub**, or **Gitee**. Your choice is saved; manual mode contacts only that channel.
+3. Click **Check for updates**. The window shows either **You are up to date** or the new version and download channel. Automatic mode first chooses the newest signed version, then tests matching mirrors, reading at most 256 KiB per channel. It does not run background speed tests.
+4. Select **Confirm update** and confirm the Relay restart, or **Cancel** to keep your installation. Checks and downloads can also be cancelled after the current network or verification step finishes.
+5. Watch the download percentage and transferred size, followed by verification and preparation stages. Signature, size, SHA-256, platform, role, and edition must all match before replacement. Relay connections and panel terminals disconnect briefly; original model App tasks are not stopped.
 
-Older installations without this button need a first manual full-package upgrade. Preserve user data rather than re-enrolling or deleting configuration. Cockpit updates require read access to the private repository; Standard updates do not require GitHub authorization.
+Older installations without this button need a first manual full-package upgrade. Preserve user data rather than re-enrolling or deleting configuration. Standard updates need no token. Private updates require a repository-read token for the selected provider; GitHub and Gitee tokens are not interchangeable. Use a token for this session only or opt in to system-keychain storage. Automatic mode can use one available channel and fall back on network failure only to an identical signed installer. Signature, hash, or identity errors stop the update.
 
 ### Backups
 
