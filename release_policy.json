@@ -1,5 +1,5 @@
 {
-  "schema": 2,
+  "schema": 3,
   "requestedAt": "2026-10-13",
   "clientEditions": [
     "standard"
@@ -22,5 +22,11 @@
   "standardSourceIndependent": true,
   "standardServerCockpitCompatibility": false,
   "standardSourceLicense": "PolyForm-Noncommercial-1.0.0",
+  "installerFormats": {
+    "Windows-x64": "exe",
+    "Linux-x64": "deb",
+    "macOS-arm64": "dmg"
+  },
+  "retainLegacyUpdateArchives": true,
   "privateEditionIncluded": false
 }

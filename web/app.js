@@ -94,6 +94,7 @@ const choiceBusy = new Set();
 let questionPointerInteraction = null;
 let questionPointerReleaseTimer = null;
 const questionInteractionRenders = new Map();
+const questionDraftSessions = new Map();
 let capacityCountdownTimer = null;
 const submittedChoices = new Set();
 let editingQueuedMessageId = '';
@@ -3198,6 +3199,7 @@ function clearThread() {
   $('sendResult').className = '';
   $('notice').hidden = true;
   $('notice').replaceChildren();
+  clearQuestionDock();
   $('message').disabled = true;
   $('addAttachment').disabled = true;
   syncCopiedFileButton();
@@ -3358,6 +3360,7 @@ async function selectThread(host, thread, revealSelection = false, userInitiated
   $('timeline').replaceChildren();
   $('notice').hidden = true;
   $('notice').replaceChildren();
+  clearQuestionDock();
   $('jumpBottom').hidden = true;
   $('message').value = drafts.get(`${host.id}/${thread.id}`) || '';
   pendingFiles = [...(attachmentDrafts.get(`${host.id}/${thread.id}`) || [])];
@@ -3502,6 +3505,7 @@ async function submitAsyncChoice(item, answers, card) {
     }
   } finally {
     choiceBusy.delete(key);
+    if (current && selected?.host === target.host && selected?.thread === target.thread) renderQuestionDock(current);
   }
 }
 
@@ -3563,6 +3567,7 @@ function renderAsyncQuestions(container, item, state) {
     form.feedback.setAttribute('role', 'status');
     form.submit = document.createElement('button');
     form.submit.type = 'submit';
+    form.submit.className = 'question-page-submit';
     form.submit.textContent = '提交选择';
     container.append(form);
   }
@@ -3587,9 +3592,9 @@ function renderAsyncQuestions(container, item, state) {
       entry = {field, legend, custom, optionSignature: '', options: []};
     }
     const {field, legend, custom} = entry;
-    legend.toggleAttribute('data-i18n-ignore', questions.length !== 1);
-    legend.textContent = questions.length === 1 ? '可选一项，或填写自己的回答' :
-      `${index + 1}. ${question.title}`;
+    field.dataset.questionKey = JSON.stringify(['async', item.turnId || '', item.id, key]);
+    legend.setAttribute('data-i18n-ignore', '');
+    legend.textContent = question.title;
     const optionSignature = JSON.stringify(question.options || []);
     if (entry.optionSignature !== optionSignature) {
       const checked = field.querySelector('input[type="radio"]:checked')?.value;
@@ -3603,6 +3608,7 @@ function renderAsyncQuestions(container, item, state) {
         input.checked = option === checked;
         input.onchange = () => {if (input.checked) custom.value = '';};
         const text = document.createElement('span');
+        text.setAttribute('data-i18n-ignore', '');
         text.textContent = option;
         label.append(input, text);
         return label;
@@ -3639,6 +3645,7 @@ function renderAsyncQuestions(container, item, state) {
       const selectedOption = field.querySelector('input[type="radio"]:checked');
       const answer = custom.value.trim() || selectedOption?.value || '';
       if (!answer) {
+        window.CRBQuestionDeck.reveal(field);
         feedback.className = 'async-choice-feedback error';
         feedback.textContent = `请回答「${question.title}」`;
         return;
@@ -3647,6 +3654,56 @@ function renderAsyncQuestions(container, item, state) {
     }
     submitAsyncChoice(item, answers, form);
   };
+}
+
+function clearQuestionDock() {
+  const dock = $('questionDock');
+  dock.hidden = true;dock.replaceChildren();dock.questionPageKey = '';dock.onQuestionPageChange = null;
+}
+
+function renderQuestionDock(thread, items = combinedHistoryItems(thread)) {
+  if (deferQuestionInteractionRender('questions', () => {
+    if (current) renderQuestionDock(current);
+  })) return;
+  const dock = $('questionDock');
+  const identity = historyKey();
+  let session = questionDraftSessions.get(identity);
+  if (!session) {
+    session = {cards: new Map(), activeKey: ''};questionDraftSessions.set(identity, session);
+    while (questionDraftSessions.size > 20) questionDraftSessions.delete(questionDraftSessions.keys().next().value);
+  }
+  const body = window.CRBQuestionDeck.body(dock);
+  const live = Boolean(!threadPreviewOnly && current?.id === thread.id && current.owned && current.online);
+  const next = new Map();
+  for (const [key, item] of pendingQuestionItems(thread, items)) {
+    const answerKey = asyncQuestionKey(item);
+    if (submittedChoices.has(answerKey)) continue;
+    const record = session.cards.get('async/' + key) || document.createElement('article');
+    renderAsyncQuestions(record, item, choiceBusy.has(answerKey) ? 'submitting' : live && thread.source === 'desktop-live' ? 'ready' : 'offline');
+    next.set('async/' + key, record);
+  }
+  for (const request of thread.requests || []) {
+    if (request.method !== 'item/tool/requestUserInput') continue;
+    const key = 'native/' + JSON.stringify([request.turnId, request.id]);
+    const controls = {...request};
+    for (const name of ['reason', 'message', 'autoResolutionMs']) delete controls[name];
+    const signature = JSON.stringify(controls);
+    let card = session.cards.get(key);
+    if (!card || card.controlSignature !== signature) {
+      card = document.createElement('article');card.className = 'request-card';card.dataset.requestKey = key;card.controlSignature = signature;
+      card.questionReason = document.createElement('p');card.questionReason.setAttribute('data-i18n-ignore', '');card.append(card.questionReason);
+      renderUserInputRequest(card, request);
+      const feedback = document.createElement('p');feedback.className = 'request-feedback';feedback.setAttribute('role', 'status');card.append(feedback);
+    }
+    card.questionReason.textContent = request.reason || request.message || '';
+    card.questionReason.hidden = !card.questionReason.textContent;
+    const disabled = !live || request.desktopOnly || card.dataset.submitted === 'true' || requestBusy.has(`${selected?.host}/${selected?.thread}/${request.id}`);
+    card.querySelectorAll('input, button').forEach(control => {control.disabled = Boolean(disabled);});
+    next.set(key, card);
+  }
+  session.cards = next;reconcileConnectedChildren(body, [...next.values()]);
+  dock.questionPageKey = session.activeKey;dock.onQuestionPageChange = key => {session.activeKey = key;};
+  window.CRBQuestionDeck.update(dock);
 }
 
 function messageDate(item) {
@@ -3798,12 +3855,8 @@ function renderItem(item, choiceState = 'past') {
       }
       // Keep interactive answers outside rich-text replacement. Progress/text
       // patches can update the message without detaching its custom editor.
-      if (item.questions?.length && !record.questions) {
-        record.questions = document.createElement('div');
-        record.questions.className = 'message-questions';
-        record.el.insertBefore(record.questions, record.content.nextSibling);
-      }
-      if (record.questions) renderAsyncQuestions(record.questions, item, choiceState);
+      // Questions live in the fixed question deck, never inside this stream.
+      record.questions?.remove();
       record.deliveryFooter?.remove();
       record.deliveryFooter = null;
       if (['userMessage', 'steeringUserMessage'].includes(item.type) && !item.scheduledTrigger) {
@@ -4272,7 +4325,7 @@ async function bindOutgoingScope(scope) {
   const previous = outgoingScope;
   outgoingScope = scope;
   localOutgoingMessages.clear();
-  if (previous && previous !== scope) {drafts.clear();attachmentDrafts.clear();clearThreadSnapshots();}
+  if (previous && previous !== scope) {drafts.clear();attachmentDrafts.clear();questionDraftSessions.clear();clearQuestionDock();clearThreadSnapshots();}
   let rows = [];
   try {
     await outgoingJournalQueue.catch(() => {});
@@ -4693,8 +4746,6 @@ function executionFeedbackForGroup(thread, group, latest) {
 }
 
 function renderTimeline(thread, preserveAnchor = null) {
-  if (current?.id === thread.id && deferQuestionInteractionRender('timeline', () =>
-      renderTimeline(current, preserveAnchor))) return;
   const timeline = $('timeline');
   const scrollTop = timeline.scrollTop;
   const nearBottom = timelineNearBottom();
@@ -4706,6 +4757,7 @@ function renderTimeline(thread, preserveAnchor = null) {
     .map(node => [node.dataset.segmentKey, node]));
 
   const allItems = combinedHistoryItems(thread);
+  renderQuestionDock(thread, allItems);
   const pendingQuestions = pendingQuestionItems(thread, allItems);
   const groups = timelineSegments(allItems);
   const focused = document.activeElement;
@@ -4939,6 +4991,20 @@ function populateEfforts(modelId, desired) {
   setOptions($('effortSelect'), items, value);
 }
 
+function populateServiceTiers(modelId, desired = 'default') {
+  const host = currentHost();
+  const model = host?.models.find(item => item.id === modelId);
+  const tiers = applicationId(host) === 'codex' ? (model?.serviceTiers || []) : [];
+  const shown = tiers.some(tier => tier.id !== 'default');
+  for (const id of ['speedSelect', 'speedLabel', 'speedUsageNote']) $(id).hidden = !shown;
+  const label = tier => tier.id === 'default' ? '标准' :
+    ['priority', 'fast'].includes(tier.id) ? '⚡ 加速' :
+      tier.id === 'ultrafast' ? '⚡ 极速' : tier.name || tier.id;
+  const matching = tiers.some(tier => tier.id === desired) ? desired :
+    ['priority', 'fast'].includes(desired) ? tiers.find(tier => ['priority', 'fast'].includes(tier.id))?.id : '';
+  setOptions($('speedSelect'), tiers.map(tier => ({value: tier.id, label: label(tier), title: tier.description})), matching || 'default');
+}
+
 function populateNewThreadEfforts(desired) {
   const host = currentHost();
   const model = host?.models.find(item => item.id === $('newThreadModel').value);
@@ -5093,7 +5159,10 @@ function syncThreadControls() {
     if (modelLabel !== '未设置模型') modelName.dataset.i18nIgnore = 'true';
     modelName.textContent = modelLabel;
     const effortNameLabel = document.createElement('span'); effortNameLabel.textContent = effortLabel;
-    $('modelSettingsSummary').replaceChildren(modelName, document.createTextNode(' · '), effortNameLabel);
+    const tier = applicationId(host) === 'codex' ? (current?.serviceTier || 'default') : 'default';
+    const speedBadge = document.createElement('span');
+    speedBadge.textContent = tier === 'ultrafast' ? ' · ⚡ 极速' : ['priority', 'fast'].includes(tier) ? ' · ⚡ 加速' : '';
+    $('modelSettingsSummary').replaceChildren(modelName, document.createTextNode(' · '), effortNameLabel, speedBadge);
     $('modelSettingsToggle').title = '展开模型与推理设置';
     $('modelControls').hidden = !document.body.classList.contains('composer-settings-open');
     const desired = modelDirty ? $('modelSelect').value : activeModel;
@@ -5102,6 +5171,8 @@ function syncThreadControls() {
     })), desired);
     if (!modelDirty) populateEfforts($('modelSelect').value,
       current?.reasoningEffort || meta.reasoningEffort);
+    if (!modelDirty) populateServiceTiers($('modelSelect').value, current?.serviceTier || 'default');
+    $('speedSelect').disabled = busy || threadPreviewOnly || !host.online || meta.archived;
     $('modelSelect').disabled = busy || threadPreviewOnly || !host.online || meta.archived;
     $('effortSelect').disabled = busy || threadPreviewOnly || !host.online || meta.archived;
     $('applySettings').disabled = busy || threadPreviewOnly || !host.online || meta.archived ||
@@ -5225,6 +5296,7 @@ function renderThreadSnapshot(thread, meta, target, online, preview = false, rev
   $('subtitle').textContent = `${host?.label || target.host} · ${meta.projectName || '未分类'} · ${thread.cwd || meta.cwd || ''}`;
   renderPendingRequests(thread.requests || [], thread.pendingRequests || 0,
     host?.label || '目标机', live);
+  renderQuestionDock(current);
   $('message').disabled = !live || (busy && !composerDispatch);
   $('addAttachment').disabled = !live || busy;
   syncCopiedFileButton();
@@ -7074,6 +7146,8 @@ document.addEventListener('pointerdown', event => {
   if (!node?.closest('.async-choice-card, .request-card')) return;
   finishQuestionPointerInteraction();
   questionPointerInteraction = {id: event.pointerId, key: historyKey(), node};
+  // A lost release must not leave even the question surface stale forever.
+  questionPointerReleaseTimer = setTimeout(finishQuestionPointerInteraction, 1500);
 }, {capture: true, passive: true});
 document.addEventListener('pointerup', event => {
   if (questionPointerInteraction?.id !== event.pointerId) return;
@@ -7270,6 +7344,8 @@ $('loginForm').onsubmit = async event => {
 };
 
 $('logout').onclick = async () => {
+  questionDraftSessions.clear();
+  clearQuestionDock();
   await clearOutgoingJournal();
   try {
     const edgeLogout = await fetch('/logout', {credentials: 'same-origin'});
@@ -8588,8 +8664,10 @@ $('threadMarkdownClose').onclick = () => $('threadMarkdownDialog').close();
 $('modelSelect').onchange = () => {
   modelDirty = true;
   populateEfforts($('modelSelect').value, '');
+  populateServiceTiers($('modelSelect').value, $('speedSelect').value);
 };
 $('effortSelect').onchange = () => {modelDirty = true;};
+$('speedSelect').onchange = () => {modelDirty = true;};
 function cancelModelSelection() {
   modelDirty = false;
   syncThreadControls();
@@ -8635,7 +8713,9 @@ $('applySettings').onclick = async () => {
   try {
     await issueCommand('update_settings', {
       host: host.id, thread: meta.id,
-      payload: {model: $('modelSelect').value, effort: $('effortSelect').value}
+      payload: {model: $('modelSelect').value, effort: $('effortSelect').value,
+        ...(applicationId(host) === 'codex' && host.models.find(model => model.id === $('modelSelect').value)?.serviceTiers?.length
+          ? {serviceTier: $('speedSelect').value || 'default'} : {})}
     });
     modelDirty = false;
     $('sendResult').textContent = `✓ 原 ${APPLICATION_LABELS[applicationId(host)] || applicationId(host)} 对话的模型设置已同步`;

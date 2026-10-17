@@ -500,6 +500,9 @@ class MainWindow(QMainWindow):
         self.codex_question_link.setChecked(self.settings.get('codex_question_link', False))
         layout.addWidget(self.codex_question_link)
         layout.addWidget(note('仅客户端启动 Codex 时启用 127.0.0.1 控制通道，用于网页代答后收起原 App 提问框。\n该通道具有 App 控制权限，不暴露到公网；保存设置不会重启已运行的 App。'))
+        if sys.platform == 'darwin':
+            from desktop_client.mac_permissions import permission_widget
+            layout.addWidget(permission_widget(page))
         row = QHBoxLayout()
         save = QPushButton('保存设置')
         save.setObjectName('primary')

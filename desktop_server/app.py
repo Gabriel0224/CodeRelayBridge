@@ -25,6 +25,9 @@ class ServerWindow(QMainWindow):
         self.pool = QThreadPool(self)
         self.pool.setMaxThreadCount(1)
         self.busy = False
+        self.status_pending = False
+        self.operation_generation = 0
+        self.status_generation = 0
         self.current = {}
         self.system_dialog = None
         self.update_dialog = None
@@ -156,6 +159,9 @@ class ServerWindow(QMainWindow):
         network = QPushButton('网络与依赖')
         network.clicked.connect(self.open_system_setup)
         layout.addWidget(network, alignment=Qt.AlignmentFlag.AlignLeft)
+        if sys.platform == 'darwin':
+            from desktop_client.mac_permissions import permission_widget
+            layout.addWidget(permission_widget(page))
         migrate = QPushButton('接管旧服务为独立程序')
         migrate.clicked.connect(self.migrate_server)
         layout.addWidget(migrate, alignment=Qt.AlignmentFlag.AlignLeft)
@@ -202,17 +208,32 @@ class ServerWindow(QMainWindow):
         self.submit('migrate', migrate)
 
     def submit(self, key, callback):
-        if self.busy:
-            return
-        self.busy = True
-        for b in self.controls:
-            b.setEnabled(False)
+        if key == 'status':
+            if self.busy or self.status_pending:
+                return
+            self.status_pending = True
+            self.status_generation = self.operation_generation
+        else:
+            if self.busy:
+                return
+            self.busy = True
+            self.operation_generation += 1
+            for b in self.controls:
+                b.setEnabled(False)
         job = Work(key, callback)
         job.signals.done.connect(self.done)
         job.signals.failed.connect(self.failed)
         self.pool.start(job)
 
     def done(self, key, value):
+        if key == 'status':
+            self.status_pending = False
+            if self.status_generation != self.operation_generation or self.busy:
+                if not self.busy:
+                    self.refresh()
+                return
+            self.apply_status(value)
+            return
         self.busy = False
         for b in self.controls:
             b.setEnabled(True)
@@ -227,19 +248,7 @@ class ServerWindow(QMainWindow):
                 if value:
                     self.submit('restore-after-update', lambda: self.manager.control('start'))
             return
-        if key == 'status':
-            self.current = value
-            if not value['configured']:
-                self.status_label.setText('尚未配置服务器，请进入“连接与首次设置”。')
-            else:
-                self.status_label.setText(('运行中' if value['running'] else '未运行 / 暂时不可达') + '\n' + value['url'] + '\n配置：' + value['config'])
-            hosts = value.get('hosts', [])
-            self.table.setRowCount(len(hosts))
-            for row, host in enumerate(hosts):
-                fields = [host.get('label') or host['id'], host.get('applicationId') or 'codex', '在线' if host.get('online') else '离线', '已连接' if host.get('desktopConnected') else '未连接']
-                for col, text in enumerate(fields):
-                    self.table.setItem(row, col, status_table_item(str(text)) if col >= 2 else QTableWidgetItem(str(text)))
-        elif key == 'log':
+        if key == 'log':
             self.logs.setPlainText(str(value))
         else:
             if key == 'import':
@@ -259,7 +268,27 @@ class ServerWindow(QMainWindow):
             self.notice.setText(str(value))
             self.refresh()
 
+    def apply_status(self, value):
+        self.current = value
+        if not value['configured']:
+            self.status_label.setText('尚未配置服务器，请进入“连接与首次设置”。')
+        else:
+            self.status_label.setText(('运行中' if value['running'] else '未运行 / 暂时不可达') + '\n' + value['url'] + '\n配置：' + value['config'])
+        hosts = value.get('hosts', [])
+        self.table.setRowCount(len(hosts))
+        for row, host in enumerate(hosts):
+            fields = [host.get('label') or host['id'], host.get('applicationId') or 'codex', '在线' if host.get('online') else '离线', '已连接' if host.get('desktopConnected') else '未连接']
+            for col, text in enumerate(fields):
+                self.table.setItem(row, col, status_table_item(str(text)) if col >= 2 else QTableWidgetItem(str(text)))
+
     def failed(self, key, error):
+        if key == 'status':
+            self.status_pending = False
+            if self.status_generation == self.operation_generation and (not self.busy):
+                self.notice.setText(error)
+            elif not self.busy:
+                self.refresh()
+            return
         self.busy = False
         for b in self.controls:
             b.setEnabled(True)

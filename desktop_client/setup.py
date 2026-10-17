@@ -13,6 +13,7 @@ import urllib.request
 import uuid
 from desktop_client.backend import ClientError, valid_telemetry, matching_processes
 from desktop_client.connections import ConnectionStore, atomic_json, validate_relay_url
+from crb.common.native_payload import package_directory, package_fingerprint
 
 class RevocationUnconfirmed(ClientError):
     """A revoke request may have committed; never resume its old credential."""
@@ -117,9 +118,15 @@ def ensure_client_installed(executable=None, target=None):
         return target
     if not getattr(sys, 'frozen', False) and executable is None:
         raise ClientError('请使用独立客户端 EXE 完成首次接入。')
-    if target.exists():
-        raise ClientError('本机已有另一份客户端，请从已安装的 Relay Client 打开，避免覆盖运行中的程序。')
     destination = target.parents[3] if sys.platform == 'darwin' else target.parent
+    if target.exists():
+        if target.is_symlink() or destination.is_symlink() or getattr(destination, 'is_junction', lambda: False)():
+            raise ClientError('已有安装目录为链接，未复用或覆盖。')
+        if package_fingerprint(package_directory(source)) != package_fingerprint(package_directory(target)):
+            raise ClientError('本机已有另一份客户端，请从已安装的 Relay Client 打开，避免覆盖运行中的程序。')
+        if getattr(sys, 'frozen', False) and (sys.platform != 'win32' or target.parent.parent.name == 'CodexRelayClient'):
+            desktop_shortcut(target)
+        return target
     stage = destination.with_name('app-install-' + uuid.uuid4().hex)
     stage.mkdir(parents=True)
     try:
@@ -131,14 +138,11 @@ def ensure_client_installed(executable=None, target=None):
             stage.rename(target.parents[3])
             desktop_shortcut(target)
             return target
-        shutil.copy2(source, stage / target.name)
         internal = source.parent / '_internal'
         if not internal.is_dir():
             raise ClientError('安装包缺少 _internal 运行时，请解压完整安装包后启动。')
-        shutil.copytree(internal, stage / '_internal')
-        readme = source.parent / 'README.md'
-        if readme.exists():
-            shutil.copy2(readme, stage / 'README.md')
+        from crb.common.native_payload import copy_package
+        copy_package(source.parent, stage)
         stage.rename(target.parent)
         if getattr(sys, 'frozen', False) and target.parent.parent.name == 'CodexRelayClient':
             desktop_shortcut(target)
@@ -155,6 +159,9 @@ def persistent_client_executable(install=True):
     return ensure_client_installed() if install else Path(sys.executable).resolve()
 
 def desktop_shortcut(executable):
+    from desktop_client.package_layout import deb_layout
+    if deb_layout(executable, 'client'):
+        return
     if sys.platform != 'win32':
         executable = Path(executable).resolve()
         if sys.platform == 'darwin':

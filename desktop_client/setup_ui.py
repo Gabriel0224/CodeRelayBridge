@@ -43,8 +43,8 @@ class SetupDialog(QDialog):
         self.panel.setObjectName('setup_panel')
         self.panel.setPlaceholderText('填写你自己的面板地址，例如 https://relay.example.com')
         self.server_dirty = False
-        self.server.textEdited.connect(lambda _: setattr(self, 'server_dirty', True))
-        self.panel.textEdited.connect(lambda value: self.server.setText(value) if not self.server_dirty else None)
+        self.server.textChanged.connect(lambda _: setattr(self, 'server_dirty', True))
+        self.panel.textChanged.connect(self.sync_default_server)
         self.password = QLineEdit()
         self.password.setEchoMode(QLineEdit.EchoMode.Password)
         self.password.setObjectName('setup_password')
@@ -101,6 +101,15 @@ class SetupDialog(QDialog):
         self.connect_button.setEnabled(bool(missing))
         buttons.addWidget(self.connect_button)
         layout.addLayout(buttons)
+
+    def sync_default_server(self, value):
+        if self.server_dirty:
+            return
+        blocked = self.server.blockSignals(True)
+        try:
+            self.server.setText(value)
+        finally:
+            self.server.blockSignals(blocked)
 
     def busy(self, value):
         self.working = value

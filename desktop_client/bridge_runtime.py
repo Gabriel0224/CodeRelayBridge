@@ -356,7 +356,9 @@ def run_worker(key):
                 cfg = dict(meter_config)
                 bundled = Path(sys._MEIPASS) / 'relay_bridge_bundle'
                 if sys.platform == 'darwin':
-                    sys.modules['mac_native_runtime'] = importlib.import_module('relay_bridge_bundle.mac_native_runtime')
+                    mac_runtime = importlib.import_module('relay_bridge_bundle.mac_native_runtime')
+                    sys.modules['mac_native_runtime'] = mac_runtime
+                    sys.modules['crb.platform.mac_native_runtime'] = mac_runtime
                 with boot_span('core.construct'):
                     agent = core.HostAgent(cfg)
             elif key == 'claude':

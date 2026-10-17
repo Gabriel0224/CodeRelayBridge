@@ -57,6 +57,15 @@ def worker():
     return 0
 
 def main():
+    if len(sys.argv) == 3 and sys.argv[1] == '--installer-uninstall':
+        from desktop_client.installer_runtime import uninstall
+        from desktop_client.connections import atomic_json
+        try:
+            atomic_json(Path(sys.argv[2]), uninstall('server'))
+            return 0
+        except Exception as error:
+            atomic_json(Path(sys.argv[2]), {'passed': False, 'errorType': type(error).__name__})
+            return 1
     if len(sys.argv) == 3 and sys.argv[1] == '--apply-crb-update':
         from desktop_client.update_apply import apply
         return apply(sys.argv[2])

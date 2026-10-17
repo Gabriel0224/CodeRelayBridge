@@ -928,7 +928,7 @@ def handler_factory(app):
                 if path in ('/', '/lite', '/lite/'):
                     html = (web_root() / 'index.html').read_bytes()
                     return self.lite_asset(page_reload_html(html, reload_nonce), 'text/html; charset=utf-8', force_reload=bool(reload_nonce))
-                if path in ('/lite/app.js', '/lite/requests.js', '/lite/reload.js', '/lite/style.css', '/lite/i18n.js', '/lite/i18n-catalog.js'):
+                if path in ('/lite/app.js', '/lite/question-deck.js', '/lite/requests.js', '/lite/reload.js', '/lite/style.css', '/lite/i18n.js', '/lite/i18n-catalog.js'):
                     name = path.rsplit('/', 1)[-1]
                     asset = web_root() / name
                     if not asset.is_file():
@@ -1039,7 +1039,7 @@ def handler_factory(app):
                             del app.secure_commands[cid]
                     return self.response(200, {'result': result, 'created': created})
                 return self.response(404, {'error': '没有找到此页面'})
-            except (BrokenPipeError, ConnectionResetError):
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
                 pass
             except Exception as exc:
                 self.response(400, {'error': str(exc)})
@@ -1184,7 +1184,7 @@ def handler_factory(app):
                     cid = app.queue(data['host'], data.get('thread', ''), action, message, data.get('id'))
                     return self.response(200, {'id': cid})
                 return self.response(404, {'error': '没有找到此接口'})
-            except (BrokenPipeError, ConnectionResetError):
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
                 pass
             except Exception as exc:
                 self.response(400, {'error': str(exc)})

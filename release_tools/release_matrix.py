@@ -13,6 +13,12 @@ def policy():
 def package_name(product, version, edition, extension):
     return f'{product}-{version}-{edition.capitalize()}-{extension}'
 
+def validate_installer_formats(records):
+    formats = policy().get('installerFormats', {})
+    for item in records:
+        if formats and (not item['file'].endswith('.' + formats[item['platform']])):
+            raise RuntimeError('Release must contain native installation formats, not archive substitutes')
+
 def bridge_hashes(manifest, edition):
     if manifest['edition'] != edition or not manifest['function_bodies_unchanged']:
         raise RuntimeError('Wrong edition or modified shared bridge logic in native build')
@@ -46,6 +52,7 @@ def inspect_bundle(executable, edition, version):
     return {'compiledVersionMatches': True, 'compiledEditionPayloadMatches': True, 'developmentTestsExcluded': True, 'freshDefaultAddressEmpty': True, 'optionalImplementationModules': sorted(optional)}
 
 def validate_release(records, version):
+    validate_installer_formats(records)
     expected = {(platform, role, 'standard') for platform in policy()['platforms'] for role in ('client', 'server')}
     actual = {(r['platform'], r['role'], r['edition']) for r in records}
     if actual != expected or len(records) != len(expected) or any((r['version'] != version for r in records)):

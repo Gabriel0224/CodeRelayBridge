@@ -7,11 +7,35 @@ import json
 import os
 from pathlib import Path
 import re
+import secrets
 import stat
 import subprocess
 import threading
 import time
+import tomllib
 from crb.codex.ipc import AppToolsUnavailable, DesktopIPC, MacNativeAppTools
+
+def mac_native_registration(home):
+    try:
+        config = tomllib.loads((Path(home) / 'config.toml').read_text(encoding='utf-8'))
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError) as error:
+        raise AppToolsUnavailable('无法读取原 App 的 Mac 本机桥接配置，未覆盖。') from error
+    return config.get('mcp_servers', {}).get('codex_relay_native_bridge')
+
+def mac_native_bridge_directory(home):
+    """The App owns one bridge across client installs, not a pairing's data dir."""
+    home = Path(home).expanduser()
+    try:
+        entry = mac_native_registration(home) or {}
+        directory = entry.get('env', {}).get('CODEX_RELAY_NATIVE_BRIDGE_DIR')
+        args = entry.get('args', [])
+        if isinstance(directory, str) and Path(directory).is_absolute() and isinstance(args, list) and (len(args) == 1) and isinstance(args[0], str) and (Path(args[0]).name == 'mac_native_bridge.mjs'):
+            return Path(directory)
+    except (FileNotFoundError, ValueError, AttributeError, TypeError):
+        pass
+    return home / 'crb-native'
 
 class MacNativeRuntime:
 
@@ -23,6 +47,51 @@ class MacNativeRuntime:
         self.lock = threading.Lock()
         self.retry_after = 0
         self.unarchived = False
+        self.registration_ready = False
+
+    def ensure_registration(self):
+        if self.registration_ready:
+            return
+        server = self.server_factory()
+        entry = mac_native_registration(self.home)
+        if entry is not None:
+            if not isinstance(entry, dict) or entry.get('enabled', True) is not True or entry.get('env', {}).get('CODEX_RELAY_NATIVE_BRIDGE_DIR') != str(self.directory) or (not isinstance(entry.get('args'), list)) or (len(entry['args']) != 1) or (not isinstance(entry['args'][0], str)) or (Path(entry['args'][0]).name != 'mac_native_bridge.mjs'):
+                raise AppToolsUnavailable('现有 Mac 本机工具桥接已禁用或配置不同，未覆盖；请在原 App 的 MCP 设置中检查。')
+            MacNativeAppTools._private(self.directory, 'directory')
+            MacNativeAppTools._private(self.directory / 'token', 'file')
+            self.registration_ready = True
+            return
+        if len(os.fsencode(str(self.directory))) + 30 > 100:
+            raise AppToolsUnavailable('Mac 本机工具桥接路径过长，请选择更短的 Codex 用户目录。')
+        script = Path(__file__).with_name('mac_native_bridge.mjs')
+        node = Path(server.binary).parent / 'cua_node/bin/node'
+        if not script.is_file() or not node.is_file():
+            raise AppToolsUnavailable('Mac 安装包或原 App 缺少本机工具桥接依赖，未修改配置。')
+        try:
+            self.directory.mkdir(mode=448, parents=True, exist_ok=False)
+        except FileExistsError:
+            pass
+        MacNativeAppTools._private(self.directory, 'directory')
+        token = self.directory / 'token'
+        try:
+            fd = os.open(token, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 384)
+        except FileExistsError:
+            pass
+        else:
+            with os.fdopen(fd, 'w', encoding='utf-8') as output:
+                output.write(secrets.token_hex(32))
+                output.flush()
+                os.fsync(output.fileno())
+        MacNativeAppTools._private(token, 'file')
+        value = token.read_text(encoding='utf-8').strip()
+        if not re.fullmatch('[a-f0-9]{64}', value):
+            raise AppToolsUnavailable('Mac 本机工具桥接凭据格式不正确，未覆盖。')
+        registration = {'command': str(node), 'args': [str(script)], 'enabled': True, 'env': {'CODEX_RELAY_NATIVE_BRIDGE_DIR': str(self.directory)}}
+        server.request('config/value/write', {'keyPath': 'mcp_servers.codex_relay_native_bridge', 'mergeStrategy': 'replace', 'value': registration, 'filePath': str(self.home / 'config.toml')}, timeout=15)
+        actual = mac_native_registration(self.home)
+        if not isinstance(actual, dict) or any((actual.get(key) != item for key, item in registration.items())):
+            raise AppToolsUnavailable('Mac 本机工具桥接配置尚未确认，未提交聊天操作。')
+        self.registration_ready = True
 
     @property
     def context_id(self):
@@ -45,6 +114,7 @@ class MacNativeRuntime:
 
     def ensure_context(self):
         """Materialize only our caller context; never resume a user's writer."""
+        self.ensure_registration()
         MacNativeAppTools._private(self.directory, 'directory')
         self.unarchived = False
         tid = self.context_id

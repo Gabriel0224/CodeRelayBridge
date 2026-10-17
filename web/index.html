@@ -13,6 +13,7 @@
   <script src="/lite/vendor/katex/auto-render.min.js" defer></script>
   <script src="/lite/vendor/xterm.js" defer></script>
   <script src="/lite/vendor/xterm-addon-fit.js" defer></script>
+  <script src="/lite/question-deck.js" defer></script>
   <script src="/lite/requests.js" defer></script>
   <script src="/lite/i18n-catalog.js" defer></script>
   <script src="/lite/i18n.js" defer></script>
@@ -132,6 +133,7 @@
     <section id="timeline" aria-label="对话内容">
       <div class="empty"><div class="empty-icon">◈</div><h2>工作在原来的设备上继续</h2><p>这里显示桌面 App 的原对话、执行过程和回复。</p></div>
     </section>
+    <section id="questionDock" aria-label="待回答问题" hidden></section>
     <div id="composerResizer" class="pane-resizer horizontal" role="separator" aria-label="调整输入区高度" aria-orientation="horizontal" tabindex="0"></div>
     <div id="composer">
       <div class="composer-top">
@@ -145,6 +147,8 @@
         <div id="modelControls" class="model-controls" hidden>
           <label for="modelSelect">模型</label><select id="modelSelect"></select>
           <label for="effortSelect">推理</label><select id="effortSelect"></select>
+          <label id="speedLabel" for="speedSelect" hidden>速度</label><select id="speedSelect" hidden aria-describedby="speedUsageNote"></select>
+          <span id="speedUsageNote" class="model-speed-note" hidden>加速模式会增加额度消耗；实际可用性由原 App 决定。</span>
           <div class="settings-actions">
             <button id="cancelSettings" class="secondary" type="button">取消</button>
             <button id="applySettings" class="secondary" type="button">应用</button>

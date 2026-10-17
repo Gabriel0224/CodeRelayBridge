@@ -20,6 +20,9 @@ def build(role, core_source=None, harness_source=None, bridge_source=None, editi
     if edition == 'standard':
         dist = dist / 'standard'
     work.mkdir(parents=True, exist_ok=True)
+    if sys.platform == 'darwin':
+        from desktop_client.native_icons import mac_icon
+        mac_icon(work, role)
     args = [sys.executable, '-m', 'PyInstaller', '--noconfirm', '--clean', '--windowed', '--onedir', '--name', product, '--distpath', str(dist), '--workpath', str(work / 'pyinstaller'), '--specpath', str(work), '--paths', str(repo), '--exclude-module', 'PySide6.QtWebEngineCore', '--exclude-module', 'PySide6.QtWebEngineWidgets', '--exclude-module', 'PySide6.QtQml']
     delimiter = ';' if sys.platform == 'win32' else ':'
     if role == 'client':

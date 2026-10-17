@@ -26,7 +26,7 @@ async function answerPendingRequest(request, response, card) {
   if (!selected || !current?.owned || !current?.online) return;
   const target = {...selected};
   const key = `${target.host}/${target.thread}/${request.id}`;
-  if (requestBusy.has(key)) return;
+  if (requestBusy.has(key) || card.dataset.submitted === 'true') return;
   requestBusy.add(key);
   const feedback = card.querySelector('.request-feedback');
   card.querySelectorAll('[data-request-action]').forEach(button => button.disabled = true);
@@ -49,6 +49,7 @@ async function answerPendingRequest(request, response, card) {
     if (card.isConnected && card.dataset.submitted !== 'true') {
       card.querySelectorAll('[data-request-action]').forEach(button => button.disabled = false);
     }
+    if (current && selected?.host === target.host && selected?.thread === target.thread) renderQuestionDock(current);
   }
 }
 
@@ -151,7 +152,9 @@ function renderUserInputRequest(card, request) {
   for (const [index, question] of questions.entries()) {
     if (!question || !question.id) continue;
     const field = document.createElement('fieldset');
+    field.dataset.questionKey = JSON.stringify(['native', request.turnId || '', request.id, question.id]);
     const legend = document.createElement('legend');
+    legend.setAttribute('data-i18n-ignore', '');
     legend.textContent = `${question.header || `问题 ${index + 1}`} · ${question.question || ''}`;
     field.append(legend);
     const options = Array.isArray(question.options) ? question.options : [];
@@ -164,6 +167,7 @@ function renderUserInputRequest(card, request) {
       input.name = `request-${request.id}-${question.id}`;
       input.value = option.label || '';
       const text = document.createElement('span');
+      text.setAttribute('data-i18n-ignore', '');
       text.textContent = option.description ?
         `${option.label} · ${option.description}` : option.label;
       label.append(input, text);
@@ -182,6 +186,7 @@ function renderUserInputRequest(card, request) {
   actions.className = 'request-actions';
   const submit = document.createElement('button');
   submit.type = 'submit';
+  submit.className = 'question-page-submit';
   submit.textContent = '提交回答';
   submit.dataset.requestAction = 'true';
   actions.append(submit);
@@ -197,6 +202,7 @@ function renderUserInputRequest(card, request) {
       const values = multi ? [...chosen, ...(typed ? [typed] : [])] :
         (typed ? [typed] : chosen.slice(0, 1));
       if (!values.length) {
+        window.CRBQuestionDeck.reveal(field);
         const feedback = card.querySelector('.request-feedback');
         feedback.className = 'request-feedback error';
         feedback.textContent = `请回答「${question.header || question.question}」或选择跳过`;
@@ -336,7 +342,9 @@ function renderPendingRequests(requests, count, hostLabel, live) {
       current?.requests || [], current?.pendingRequests || 0,
       currentHost()?.label || hostLabel,
       Boolean(current?.owned && current?.online && !threadPreviewOnly)))) return;
-  const values = Array.isArray(requests) ? requests : [];
+  const sourceRequests = Array.isArray(requests) ? requests : [];
+  const values = sourceRequests.filter(request => request.method !== 'item/tool/requestUserInput');
+  count = Math.max(values.length, count - (sourceRequests.length - values.length));
   const signature = JSON.stringify([selected?.host, selected?.thread, hostLabel, live,
     count, values]);
   if (signature === requestRenderSignature) return;

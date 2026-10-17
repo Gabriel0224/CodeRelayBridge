@@ -1,6 +1,6 @@
 # CodeRelayBridge（CRB）
 
-[English](README.en.md) · [下载](https://github.com/Gabriel0224/CodeRelayBridge/releases/latest) · [使用指南](docs/USER_GUIDE.zh-CN.md)
+[English](README.en.md) · [下载安装](#下载与要求) · [使用指南](docs/USER_GUIDE.zh-CN.md)
 
 在一个网页中使用多台电脑上的 Codex 和 DeepSeek Harness 桌面应用。通过电脑、平板或手机管理项目、继续对话、查看执行过程，并访问对应电脑的文件和终端。
 
@@ -25,13 +25,15 @@
 
 ## 下载与要求
 
-[下载最新版本](https://github.com/Gabriel0224/CodeRelayBridge/releases/latest)
+[GitHub 发行版](https://github.com/Gabriel0224/CodeRelayBridge/releases) · [Gitee 发行版](https://gitee.com/gabriel0224/CodeRelayBridge/releases)
+
+按系统下载对应角色的最新安装包。各平台可独立更新，下表分别标明客户端和服务端的版本；无需从其他平台的发行版中查找。
 
 | 平台 | 客户端 | 服务端 |
 | --- | --- | --- |
-| Windows x64 | ZIP | ZIP |
-| Linux x64（Ubuntu / Mint） | TAR.GZ | TAR.GZ |
-| macOS 27+ Apple Silicon | DMG | DMG |
+| Windows x64 | [v0.6.49 · Setup.exe](https://github.com/Gabriel0224/CodeRelayBridge/releases/download/v0.6.49/RelayClient-0.6.49-Standard-Windows-x64-Setup.exe) · [Gitee](https://gitee.com/gabriel0224/CodeRelayBridge/releases/download/v0.6.49/RelayClient-0.6.49-Standard-Windows-x64-Setup.exe) | [v0.6.49 · Setup.exe](https://github.com/Gabriel0224/CodeRelayBridge/releases/download/v0.6.49/RelayServer-0.6.49-Standard-Windows-x64-Setup.exe) · [Gitee](https://gitee.com/gabriel0224/CodeRelayBridge/releases/download/v0.6.49/RelayServer-0.6.49-Standard-Windows-x64-Setup.exe) |
+| Linux x64（Ubuntu / Mint） | [v0.6.49 · DEB](https://github.com/Gabriel0224/CodeRelayBridge/releases/download/v0.6.49/RelayClient-0.6.49-Standard-Linux-x64.deb) · [Gitee](https://gitee.com/gabriel0224/CodeRelayBridge/releases/download/v0.6.49/RelayClient-0.6.49-Standard-Linux-x64.deb) | [v0.6.49 · DEB](https://github.com/Gabriel0224/CodeRelayBridge/releases/download/v0.6.49/RelayServer-0.6.49-Standard-Linux-x64.deb) · [Gitee](https://gitee.com/gabriel0224/CodeRelayBridge/releases/download/v0.6.49/RelayServer-0.6.49-Standard-Linux-x64.deb) |
+| macOS 27+ Apple Silicon | [v0.6.49 · DMG](https://github.com/Gabriel0224/CodeRelayBridge/releases/download/v0.6.49/RelayClient-0.6.49-Standard-macOS27-arm64.dmg) · [Gitee](https://gitee.com/gabriel0224/CodeRelayBridge/releases/download/v0.6.49/RelayClient-0.6.49-Standard-macOS27-arm64.dmg) | [v0.6.49 · DMG](https://github.com/Gabriel0224/CodeRelayBridge/releases/download/v0.6.49/RelayServer-0.6.49-Standard-macOS27-arm64.dmg) · [Gitee](https://gitee.com/gabriel0224/CodeRelayBridge/releases/download/v0.6.49/RelayServer-0.6.49-Standard-macOS27-arm64.dmg) |
 
 客户端和服务端是独立程序。完整安装包包含 Python、Qt 和运行依赖；Linux 可能还需要系统图形库。原 Codex／DeepSeek Harness 桌面应用需另外安装并登录。
 

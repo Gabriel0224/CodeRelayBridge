@@ -16,6 +16,10 @@ def package_root(executable):
     return executable.parents[2] if sys.platform == 'darwin' else executable.parent
 
 def update_targets(executable, role):
+    from desktop_client.package_layout import deb_layout
+    layout = deb_layout(executable, role)
+    if layout:
+        return [Path(layout['directory'])]
     target = package_root(executable)
     if target.is_symlink() or getattr(target, 'is_junction', lambda: False)():
         raise UpdateError('当前程序路径含重定向，未准备替换。')
@@ -173,6 +177,8 @@ def apply(plan_file):
     plan_file = Path(plan_file).resolve()
     result_file = plan_file.with_name('install-result.json')
     records = []
+    native_transaction = None
+    previous_registration_version = None
     owner_gone = False
     plan = None
     try:
@@ -200,19 +206,54 @@ def apply(plan_file):
             executable = process.info.get('exe')
             if process.info['username'] == plan['ownerUser'] and executable and (str(Path(executable).resolve()) in target_exes):
                 raise UpdateError('本机 Relay 进程尚未全部退出，未替换程序。')
-        records = transactional_replace(plan['candidate'], plan['targets'])
+        from desktop_client.package_layout import deb_layout
+        if deb_layout(plan['ownerExecutable'], plan['role']):
+            from desktop_client.system_deb_update import apply as install_deb
+            native_transaction = install_deb(plan)
+        else:
+            records = transactional_replace(plan['candidate'], plan['targets'])
         for target in plan['targets']:
             validate_identity(Path(target), plan['role'], plan['edition'])
+        if sys.platform == 'win32':
+            previous_registration_version = update_installer_registration(plan['role'], plan['targets'][0], payload['version'])
         launched = launch_updated(plan)
         confirm_launch(launched, package_executable(Path(plan['targets'][0]), plan['role']))
-        atomic_json(result_file, {'passed': True, 'version': payload['version'], 'role': plan['role'], 'edition': plan['edition'], 'restartedPid': launched.pid, 'backups': [str(row['backup']) for row in records], 'configurationReplaced': False})
+        atomic_json(result_file, {'passed': True, 'version': payload['version'], 'role': plan['role'], 'edition': plan['edition'], 'restartedPid': launched.pid, 'backups': ([native_transaction['archive']] if native_transaction else []) + [str(row['backup']) for row in records], 'configurationReplaced': False})
         return 0
     except Exception as error:
         rollback(records)
-        if owner_gone and plan:
+        recovered = True
+        if native_transaction:
+            try:
+                from desktop_client.system_deb_update import restore
+                restore(native_transaction)
+            except UpdateError as recovery_error:
+                error, recovered = (recovery_error, False)
+        if previous_registration_version is not None:
+            try:
+                update_installer_registration(plan['role'], plan['targets'][0], previous_registration_version)
+            except OSError:
+                pass
+        if owner_gone and plan and recovered:
             try:
                 launch_updated(plan)
             except Exception:
                 pass
         atomic_json(result_file, {'passed': False, 'errorType': type(error).__name__, 'message': str(error) if isinstance(error, UpdateError) else '更新未完成，旧程序已恢复。', 'configurationReplaced': False})
         return 1
+
+def update_installer_registration(role, target, version):
+    """Keep the Windows uninstall entry aligned after a verified payload update."""
+    import winreg
+    path = 'Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\CodeRelayBridge.' + role + '_is1'
+    try:
+        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, path, 0, winreg.KEY_QUERY_VALUE | winreg.KEY_SET_VALUE | winreg.KEY_WOW64_64KEY)
+    except FileNotFoundError:
+        return
+    with key:
+        location = winreg.QueryValueEx(key, 'InstallLocation')[0]
+        if Path(location).resolve() != Path(target).resolve():
+            raise UpdateError('当前程序路径含重定向，未准备替换。')
+        previous = winreg.QueryValueEx(key, 'DisplayVersion')[0]
+        winreg.SetValueEx(key, 'DisplayVersion', 0, winreg.REG_SZ, version)
+        return previous

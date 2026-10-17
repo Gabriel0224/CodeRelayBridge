@@ -49,8 +49,8 @@ Clients normally initiate outbound connections to the server. Do not expose clie
 
 Choose your operating system and role at [GitHub Releases](https://github.com/Gabriel0224/CodeRelayBridge/releases). Standard packages are public; Cockpit integrated packages are not distributed in this public repository. Client and server packages are different applications.
 
-- **Windows x64:** fully extract the ZIP to a permanent directory, open `RelayServer` or `RelayClient`, then launch the matching `.exe`. Keep `_internal` and the other files; do not copy just the EXE or run inside ZIP preview.
-- **Ubuntu / Mint (Linux x64):** fully extract TAR.GZ and launch `RelayServer` / `RelayClient` from its application directory in a graphical user session. Keep all sibling libraries and resources.
+- **Windows x64:** run the matching `*-Setup.exe` and complete the per-user installation. Open the client or server from the Start menu. To uninstall, open `Uninstall.exe` beside the main executable, or use Windows Installed apps. Quit the corresponding Relay and stop its service before upgrading or uninstalling; Codex and DeepSeek may stay open. Do not move individual EXE or DLL files.
+- **Ubuntu / Mint (Linux x64):** download the matching `.deb`, run `sudo apt install --reinstall ./PACKAGE.deb` to resolve declared system dependencies, then open it from the desktop application menu. The package manager owns `/opt/coderelaybridge/`; personal settings and pairing stay in your user directory. Never run the desktop UI with sudo. Quit a previous portable Relay before migration; use the server UI's existing service takeover option for an old configured service.
 - **macOS Apple Silicon:** open the DMG and copy `Relay Server.app` / `Relay Client.app` to your applications directory. Current packages require **macOS 27 or later** and do not support Intel Macs. Check the selected Release's requirements.
 
 Python, Qt and bundled runtime dependencies are included. OS libraries and graphics drivers are still required. On Linux, use “网络与依赖” (Network and dependencies) to inspect and repair supported missing system libraries with local authorization. Arbitrarily old systems are not guaranteed compatible.
@@ -99,6 +99,8 @@ Automatic repair only handles this application's rules. It cannot override organ
 Pairing authorizes the panel to access this computer's conversations, files and terminal. Enroll only trusted servers. Some desktop operations need an active signed-in graphical session. CRB does not automatically install missing original Apps.
 
 ## 6. Browser access, quitting and unpairing
+
+Pending questions stay above the composer. Use Previous/Next and the question counter to move between them, then submit the completed group. Paging does not send answers and keeps your selections and custom text. Execution updates continue while a question is pending; answers accepted in the original app also dismiss the corresponding panel questions.
 
 Open the server URL, sign in with its web credentials, then select application, computer, project and conversation. A workspace groups conversations across sources. Files and terminals operate on the selected computer, not on your phone.
 
@@ -224,7 +226,7 @@ Back up server user data/pairing configuration and client connection configurati
 | 401/login failure | Your server's web credentials, not SSH credentials; additional upstream login layer |
 | HTTPS error | System time, trusted certificate, matching hostname; never bypass validation |
 | Computer online, no desktop conversation | Original App installed/signed in/running, bridge diagnostics and supported version |
-| Linux UI will not start | Graphical session, complete extraction, system graphical-library dependencies |
+| Linux UI will not start | Graphical session, completed DEB installation, supported OS and declared dependencies, Network and dependencies |
 | Offline after quitting the client | Expected; keep the client in tray and computer awake for continued access |
 
 On Windows, run `Test-NetConnection SERVER_IP -Port 8799` after replacing the placeholder. Elsewhere a browser or `curl -I http://SERVER_IP:8799/` can test an HTTP response. A 401/login redirect generally proves reachability, not successful authentication. Redact credentials, personal paths and real conversations before reporting issues.

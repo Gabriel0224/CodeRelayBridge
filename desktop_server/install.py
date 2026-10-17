@@ -1,6 +1,5 @@
 """Install a complete native package in the current user's data directory."""
 import os
-import hashlib
 from pathlib import Path
 import shutil
 import sys
@@ -8,26 +7,7 @@ import uuid
 from desktop_client.backend import ClientError, StartupShortcut
 from desktop_client.platform_support import installed_executable
 from desktop_server.backend import server_root
-
-def package_directory(executable):
-    return executable.parents[2] if sys.platform == 'darwin' else executable.parent
-
-def package_fingerprint(directory):
-    """Compare complete payloads before reusing an install; never overwrite it."""
-    directory = directory.resolve()
-    files = {}
-    for path in sorted(directory.rglob('*')):
-        key = path.relative_to(directory).as_posix()
-        if path.is_symlink():
-            if sys.platform == 'win32' or not path.resolve().is_relative_to(directory):
-                raise ClientError('安装包包含指向外部的链接，未复用。')
-            files[key] = ('link', os.readlink(path))
-        elif getattr(path, 'is_junction', lambda: False)():
-            raise ClientError('安装目录包含目录联接，未复用。')
-        elif path.is_file():
-            with path.open('rb') as stream:
-                files[key] = ('file', hashlib.file_digest(stream, 'sha256').hexdigest())
-    return files
+from crb.common.native_payload import package_directory, package_fingerprint
 
 def install(root=None):
     if not getattr(sys, 'frozen', False):
@@ -53,10 +33,10 @@ def install(root=None):
         if sys.platform == 'darwin':
             shutil.copytree(source.parents[2], stage / 'Relay Server.app', symlinks=True)
         else:
-            shutil.copy2(source, stage / target.name)
             if not (source.parent / '_internal').is_dir():
                 raise ClientError('安装包缺少 _internal 运行时。')
-            shutil.copytree(source.parent / '_internal', stage / '_internal', symlinks=sys.platform != 'win32')
+            from crb.common.native_payload import copy_package
+            copy_package(source.parent, stage)
         stage.rename(destination)
     finally:
         if stage.exists():
@@ -66,6 +46,9 @@ def install(root=None):
 
 def shortcut(target):
     target = Path(target)
+    from desktop_client.package_layout import deb_layout
+    if deb_layout(target, 'server'):
+        return
     if sys.platform == 'darwin':
         directory = Path.home() / 'Applications'
         directory.mkdir(exist_ok=True)

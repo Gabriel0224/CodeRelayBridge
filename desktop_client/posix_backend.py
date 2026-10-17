@@ -286,6 +286,6 @@ class PosixStartup:
             data = plistlib.dumps({'Label': 'com.codexrelay.' + self.product + '.ui', 'ProgramArguments': [str(executable), '--tray'], 'RunAtLoad': True, 'ProcessType': 'Interactive'})
         else:
             q = str(executable).replace('\\', '\\\\').replace('"', '\\"').replace('`', '\\`').replace('$', '\\$').replace('%', '%%')
-            data = ('[Desktop Entry]\nType=Application\nName=Relay ' + self.product.title() + '\nExec="' + q + '" --tray\nTerminal=false\nX-Relay-Executable=' + str(executable) + '\n').encode()
+            data = ('[Desktop Entry]\nType=Application\nName=Relay ' + self.product.title() + '\nExec="' + q + '" --tray\nTerminal=false\nTryExec=' + str(executable) + '\nX-Relay-Executable=' + str(executable) + '\n').encode()
         from desktop_client.connections import atomic_bytes
         atomic_bytes(self.path, data)

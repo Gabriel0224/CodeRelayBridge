@@ -1139,7 +1139,7 @@ def view_state(state, revision, owner, asset_factory=None, turn_cache=None, capa
     sandbox_policy = latest_settings.get('sandboxPolicy') or current_permissions.get('sandboxPolicy') or {}
     full_access = profile_id == ':danger-full-access' or sandbox_policy.get('type') == 'dangerFullAccess'
     pending = public_pending_requests(state.get('requests', []), recent_items, state['id'])
-    return {'id': state['id'], 'title': state.get('title') or '未命名对话', 'cwd': state.get('cwd', ''), 'model': state.get('latestModel'), 'reasoningEffort': state.get('latestReasoningEffort'), 'fullAccess': full_access, 'nativeMetadata': public_metadata({**state, 'activeTurn': latest_turn}), 'status': status, 'executionState': public_execution_state(state, turns, capacity_retry), 'source': 'desktop-live', 'owned': bool(owner) and status != 'notLoaded', 'canContinue': status == 'idle' and latest_turn.get('status') == 'interrupted' or bool(capacity_retry and capacity_retry['canContinue']), 'capacityRetry': capacity_retry, 'editableUserMessage': editable, 'revision': revision, 'updated': time.time(), 'items': recent_items, 'asyncQuestionState': {'pendingQuestionIds': [question['questionItemId'] for _, questions in pending_async_questions(state) for question in questions]}, 'totalItems': total_items, 'partialHistory': not history.get('isComplete', True) or len(recent_items) < total_items, 'pendingRequests': len(pending), 'requests': pending}
+    return {'id': state['id'], 'title': state.get('title') or '未命名对话', 'cwd': state.get('cwd', ''), 'model': state.get('latestModel'), 'reasoningEffort': state.get('latestReasoningEffort'), 'serviceTier': latest_settings.get('serviceTier') or 'default', 'fullAccess': full_access, 'nativeMetadata': public_metadata({**state, 'activeTurn': latest_turn}), 'status': status, 'executionState': public_execution_state(state, turns, capacity_retry), 'source': 'desktop-live', 'owned': bool(owner) and status != 'notLoaded', 'canContinue': status == 'idle' and latest_turn.get('status') == 'interrupted' or bool(capacity_retry and capacity_retry['canContinue']), 'capacityRetry': capacity_retry, 'editableUserMessage': editable, 'revision': revision, 'updated': time.time(), 'items': recent_items, 'asyncQuestionState': {'pendingQuestionIds': [question['questionItemId'] for _, questions in pending_async_questions(state) for question in questions]}, 'totalItems': total_items, 'partialHistory': not history.get('isComplete', True) or len(recent_items) < total_items, 'pendingRequests': len(pending), 'requests': pending}
 PENDING_REQUEST_METHODS = {'item/commandExecution/requestApproval', 'item/fileChange/requestApproval', 'item/permissions/requestApproval', 'item/tool/requestUserInput', 'mcpServer/elicitation/request', 'item/plan/requestImplementation'}
 
 def public_pending_requests(requests, items, thread_id):
@@ -1331,7 +1331,9 @@ class HostAgent:
         self.capacity_ui_pending = {}
         self.capacity_ui_busy = False
         self.desktop_ipc = config.get('desktop_ipc') or ('\\\\.\\pipe\\codex-ipc' if os.name == 'nt' else str(self.home / 'ipc/ipc.sock'))
-        self.app_tools = MacNativeAppTools(config.get('native_app_bridge_dir') or str(Path(config['state_dir']).expanduser() / 'native-app-bridge')) if sys.platform == 'darwin' else DesktopAppTools(config.get('app_tools_pipe'))
+        if sys.platform == 'darwin':
+            from crb.platform.mac_native_runtime import mac_native_bridge_directory
+        self.app_tools = MacNativeAppTools(config.get('native_app_bridge_dir') or mac_native_bridge_directory(self.home)) if sys.platform == 'darwin' else DesktopAppTools(config.get('app_tools_pipe'))
         self.last_catalog = 0
         self.last_automation_poll = 0
         self.automation_signature = scheduled_automation_signature(self.home)
@@ -2290,7 +2292,20 @@ class HostAgent:
             if model.get('hidden'):
                 continue
             efforts = [{'id': item.get('reasoningEffort'), 'description': item.get('description', '')} for item in model.get('supportedReasoningEfforts', []) if item.get('reasoningEffort')]
-            models.append({'id': model.get('model') or model.get('id'), 'label': model.get('displayName') or model.get('model'), 'description': model.get('description', ''), 'defaultEffort': model.get('defaultReasoningEffort'), 'isDefault': bool(model.get('isDefault')), 'efforts': efforts})
+            tiers = [{'id': 'default', 'name': 'Standard', 'description': 'Default speed'}]
+            seen_tiers = {'default'}
+            native_tiers = model.get('serviceTiers') or []
+            if not native_tiers:
+                native_tiers = [{'id': tier, 'name': tier, 'description': ''} for tier in model.get('additionalSpeedTiers', []) if isinstance(tier, str)]
+            for tier in native_tiers:
+                if not isinstance(tier, dict):
+                    continue
+                tier_id = tier.get('id')
+                if not isinstance(tier_id, str) or not 0 < len(tier_id) <= 64 or tier_id in seen_tiers:
+                    continue
+                seen_tiers.add(tier_id)
+                tiers.append({'id': tier_id, 'name': str(tier.get('name') or tier_id)[:100], 'description': str(tier.get('description') or '')[:1000]})
+            models.append({'id': model.get('model') or model.get('id'), 'label': model.get('displayName') or model.get('model'), 'description': model.get('description', ''), 'defaultEffort': model.get('defaultReasoningEffort'), 'isDefault': bool(model.get('isDefault')), 'efforts': efforts, 'serviceTiers': tiers, 'defaultServiceTier': model.get('defaultServiceTier')})
         with self.lock:
             self.models = models
             self.last_models = time.monotonic()
@@ -3340,6 +3355,12 @@ class HostAgent:
                 if effort not in supported:
                     raise ValueError('该模型不支持所选推理强度')
                 settings = {'model': model, 'effort': effort}
+                if 'serviceTier' in payload:
+                    tier = payload['serviceTier']
+                    allowed = {item['id'] for item in selected_model.get('serviceTiers', [])}
+                    if not isinstance(tier, str) or tier not in allowed:
+                        raise ValueError('该模型不支持所选加速模式')
+                    settings['serviceTier'] = tier
             if self.ipc and self.ipc.connected and state:
                 target = self.desktop_thread_owner(tid)
                 response = self.ipc.request('thread-follower-update-thread-settings', {'conversationId': tid, 'threadSettings': settings, 'activeTurnId': None}, version=2, target=target, timeout=30)
@@ -3357,6 +3378,8 @@ class HostAgent:
                 result['fullAccess'] = full_access
             else:
                 result.update({'model': model, 'effort': effort})
+                if 'serviceTier' in settings:
+                    result['serviceTier'] = settings['serviceTier']
             return result
         if not self.ipc or not self.ipc.connected:
             raise RuntimeError('请先在目标机打开 Codex 桌面 App')

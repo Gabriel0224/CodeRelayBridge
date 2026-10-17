@@ -21,6 +21,11 @@ def installed_executable(root, product='RelayClient'):
     if sys.platform == 'darwin':
         title = 'Relay Client' if product == 'RelayClient' else 'Relay Server'
         return root / 'app' / (title + '.app') / 'Contents/MacOS' / product
+    from desktop_client.package_layout import deb_layout
+    layout = deb_layout(role='client' if product == 'RelayClient' else 'server')
+    expected = data_root('CodexRelayClient' if product == 'RelayClient' else 'CodexRelayServer')
+    if layout and root.resolve() == expected.resolve():
+        return Path(layout['executable'])
     return root / 'app' / product
 
 def packaged_root():

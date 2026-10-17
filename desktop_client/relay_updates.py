@@ -25,7 +25,7 @@ OWNER = 'Gabriel0224'
 PUBLIC_REPO = 'CodeRelayBridge'
 KEY_ID = 'crb-release-v1'
 VERIFICATION_KEY = '2Jc8cJgnRJQEk9VP7X5IlGM25N0vG+Bvg/KAedY4cfw='
-MANIFEST_NAME = 'crb-update-v2.json'
+MANIFEST_NAME = 'crb-update-v3.json'
 MAX_ARCHIVE = 2 * 1024 ** 3
 MAX_EXPANDED = 4 * 1024 ** 3
 DOWNLOAD_HOSTS = {'api.github.com', 'github.com', 'release-assets.githubusercontent.com', 'objects.githubusercontent.com'}
@@ -224,6 +224,25 @@ def package_executable(root, role):
 
 def extract_package(archive, work, role):
     product = product_name(role)
+    if str(archive).endswith('.deb'):
+        if not sys.platform.startswith('linux'):
+            raise UpdateError('当前系统不支持这种更新包格式。')
+        from crb.common.deb_archive import extract_payload
+        try:
+            return extract_payload(archive, work / 'extracted' / product, role)
+        except (OSError, ValueError, tarfile.TarError):
+            raise UpdateError('更新包路径越界。') from None
+    if str(archive).endswith('.exe'):
+        if sys.platform != 'win32':
+            raise UpdateError('当前系统不支持这种更新包格式。')
+        root = work / 'extracted'
+        if root.exists() or root.is_symlink():
+            raise UpdateError('更新缓存目录身份异常。')
+        result = subprocess.run([str(archive), '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-', '/CRBEXTRACT=' + str(root)], capture_output=True, timeout=180, creationflags=subprocess.CREATE_NO_WINDOW)
+        if result.returncode:
+            raise UpdateError('安装包解压失败，原程序未改变。')
+        validate_tree(root / product)
+        return root / product
     if sys.platform == 'darwin':
         import plistlib
         app_name = 'Relay Client.app' if role == 'client' else 'Relay Server.app'

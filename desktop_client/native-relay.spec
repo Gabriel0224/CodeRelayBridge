@@ -40,4 +40,6 @@ pyz = PYZ(a.pure)
 exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name=product, console=False, upx=False, codesign_identity=None, entitlements_file=None, argv_emulation=False)
 coll = COLLECT(exe, a.binaries, a.datas, name=product, strip=False, upx=False)
 if sys.platform == 'darwin':
-    app = BUNDLE(coll, name='Relay Client.app' if role == 'client' else 'Relay Server.app', bundle_identifier='com.codexrelay.' + role, info_plist={'LSUIElement': True, 'NSHighResolutionCapable': True})
+    from desktop_client import VERSION
+    display_name = 'CodeRelayBridge ' + ('Client' if role == 'client' else 'Server')
+    app = BUNDLE(coll, name='Relay Client.app' if role == 'client' else 'Relay Server.app', bundle_identifier='com.codexrelay.' + role, icon=str(work / 'CodeRelayBridge.icns'), info_plist={'LSUIElement': True, 'NSHighResolutionCapable': True, 'CFBundleName': display_name, 'CFBundleDisplayName': display_name, 'CFBundleShortVersionString': VERSION, 'CFBundleVersion': VERSION})
