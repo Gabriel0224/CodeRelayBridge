@@ -118,7 +118,12 @@
         field.setter(field.output);
       }
     }
-    document.querySelectorAll('[data-language-select]').forEach(picker => {picker.value = value;});
+    document.querySelectorAll('[data-language-option]').forEach(option => {
+      option.setAttribute('aria-checked', String(option.dataset.languageOption === value));
+    });
+    document.querySelectorAll('[data-language-name]').forEach(label => {
+      label.textContent = value === 'zh' ? '中文' : 'English';
+    });
     visit(document.body);
     startObserver();
     window.dispatchEvent(new CustomEvent('crb-language-change', {detail: {language: value}}));
@@ -133,12 +138,6 @@
     register(messages, rows = []) {Object.assign(catalog.messages, messages); catalog.templates.push(...rows); templates = null;},
     refresh: () => visit(document.body)};
   function ready() {
-    document.querySelectorAll('[data-language-select]').forEach(picker => {
-      picker.value = language;
-      picker.addEventListener('change', () => {
-        if (!setLanguage(picker.value)) picker.value = language;
-      });
-    });
     setLanguage(language, false);
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', ready, {once: true});

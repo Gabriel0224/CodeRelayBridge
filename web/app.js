@@ -218,18 +218,6 @@ function applyPalette(value, remember = false) {
   syncTerminalThemes();
 }
 
-function closePaletteMenu(restoreFocus = false) {
-  $('paletteMenu').hidden = true;
-  $('paletteToggle').setAttribute('aria-expanded', 'false');
-  if (restoreFocus) $('paletteToggle').focus();
-}
-
-function openPaletteMenu() {
-  $('paletteMenu').hidden = false;
-  $('paletteToggle').setAttribute('aria-expanded', 'true');
-  $('paletteMenu').querySelector('[aria-checked="true"]').focus();
-}
-
 function applyTheme(value, remember = false) {
   theme = value === 'light' ? 'light' : 'dark';
   document.documentElement.dataset.theme = theme;
@@ -963,7 +951,7 @@ function renderQueuedMessages(messages, running, operable) {
       }
       const edit = document.createElement('button');
       edit.type = 'button';
-      edit.className = 'secondary queue-action';
+      edit.className = 'secondary queue-action queue-edit';
       edit.textContent = '编辑';
       edit.disabled = busy || !operable;
       edit.onclick = () => {
@@ -974,7 +962,7 @@ function renderQueuedMessages(messages, running, operable) {
       };
       const steer = document.createElement('button');
       steer.type = 'button';
-      steer.className = 'secondary queue-action';
+      steer.className = 'secondary queue-action queue-steer';
       steer.textContent = running ? '引导' : '立即发送';
       steer.disabled = busy || !operable;
       steer.onclick = () => runQueueAction('queue_send_now',
@@ -7447,37 +7435,58 @@ $('brandForm').onsubmit = async event => {
 };
 
 $('themeToggle').onclick = () => applyTheme(theme === 'light' ? 'dark' : 'light', true);
-$('paletteToggle').onclick = () => {
-  if ($('paletteMenu').hidden) openPaletteMenu();
-  else closePaletteMenu(true);
-};
-$('paletteToggle').onkeydown = event => {
-  if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-    event.preventDefault(); openPaletteMenu();
-  }
-};
-$('paletteMenu').onclick = event => {
-  const option = event.target.closest('[data-palette-option]');
-  if (!option) return;
+// Both sidebar pickers share dismissal, keyboard navigation and focus behavior.
+const sidebarMenus = [];
+function setupSidebarMenu(toggleId, menuId, optionSelector, select) {
+  const toggle = $(toggleId), menu = $(menuId);
+  const close = (restoreFocus = false) => {
+    menu.hidden = true;
+    toggle.setAttribute('aria-expanded', 'false');
+    if (restoreFocus) toggle.focus();
+  };
+  const open = () => {
+    for (const other of sidebarMenus) other.close();
+    menu.hidden = false;
+    toggle.setAttribute('aria-expanded', 'true');
+    (menu.querySelector('[aria-checked="true"]') || menu.querySelector(optionSelector))?.focus();
+  };
+  toggle.onclick = () => menu.hidden ? open() : close(true);
+  toggle.onkeydown = event => {
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault(); open();
+    }
+  };
+  menu.onclick = event => {
+    const option = event.target.closest(optionSelector);
+    if (option && select(option) !== false) close(true);
+  };
+  menu.onkeydown = event => {
+    const options = [...menu.querySelectorAll(optionSelector)];
+    const index = options.indexOf(document.activeElement);
+    if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
+      event.preventDefault();
+      const next = event.key === 'Home' ? 0 : event.key === 'End' ? options.length - 1 :
+        (index + (event.key === 'ArrowDown' ? 1 : -1) + options.length) % options.length;
+      options[next].focus();
+    } else if (event.key === 'Tab') close(true);
+  };
+  sidebarMenus.push({toggle, menu, close});
+}
+setupSidebarMenu('paletteToggle', 'paletteMenu', '[data-palette-option]', option => {
   applyPalette(option.dataset.paletteOption, true);
-  closePaletteMenu(true);
-};
-$('paletteMenu').onkeydown = event => {
-  const options = [...$('paletteMenu').querySelectorAll('[data-palette-option]')];
-  const index = options.indexOf(document.activeElement);
-  if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
-    event.preventDefault();
-    const next = event.key === 'Home' ? 0 : event.key === 'End' ? options.length - 1 :
-      (index + (event.key === 'ArrowDown' ? 1 : -1) + options.length) % options.length;
-    options[next].focus();
-  } else if (event.key === 'Tab') closePaletteMenu();
-};
+});
+setupSidebarMenu('languageToggle', 'languageMenu', '[data-language-option]', option =>
+  window.CRBI18n?.setLanguage(option.dataset.languageOption) ?? false);
 document.addEventListener('pointerdown', event => {
-  if (!$('paletteMenu').hidden && !event.target.closest('.theme-picker')) closePaletteMenu();
+  for (const {toggle, menu, close} of sidebarMenus) {
+    if (!menu.hidden && !toggle.parentElement.contains(event.target)) close();
+  }
 });
 document.addEventListener('keydown', event => {
-  if (event.key === 'Escape' && !$('paletteMenu').hidden) {
-    event.preventDefault(); closePaletteMenu(true);
+  if (event.key === 'Escape') {
+    for (const {menu, close} of sidebarMenus) if (!menu.hidden) {
+      event.preventDefault(); close(true);
+    }
   }
 });
 $('fontSize').oninput = () => {

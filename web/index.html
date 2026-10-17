@@ -76,11 +76,17 @@
     <div class="aside-bottom">
       <div class="aside-actions">
         <a id="bugFeedback" class="quiet bug-feedback" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer" aria-label="反馈问题" aria-disabled="true" tabindex="-1" title="反馈入口暂不可用；请刷新面板"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 7V5a3 3 0 0 1 6 0v2M8 10h8M12 10v9M5 13H2m20 0h-3M5 8 3 6m16 2 2-2M5 18l-2 2m16-2 2 2"/><rect x="5" y="7" width="14" height="14" rx="7"/></svg><span>反馈</span></a>
-        <label class="language-picker" title="语言"><select id="languageSelect" data-language-select aria-label="语言"><option value="zh">中文</option><option value="en">English</option></select></label>
+        <div class="sidebar-picker language-picker">
+          <button id="languageToggle" class="quiet" type="button" aria-haspopup="menu" aria-controls="languageMenu" aria-expanded="false" title="选择语言" aria-label="选择语言"><svg class="sidebar-picker-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a18 18 0 0 1 0 18 18 18 0 0 1 0-18Z"/></svg><span data-language-name data-i18n-ignore>中文</span><span aria-hidden="true">⌃</span></button>
+          <div id="languageMenu" class="sidebar-menu language-menu" role="menu" aria-label="语言" hidden>
+            <button type="button" role="menuitemradio" data-language-option="zh" aria-checked="true"><span lang="zh-CN" data-i18n-ignore>中文</span><span class="menu-check" aria-hidden="true">✓</span></button>
+            <button type="button" role="menuitemradio" data-language-option="en" aria-checked="false"><span lang="en" data-i18n-ignore>English</span><span class="menu-check" aria-hidden="true">✓</span></button>
+          </div>
+        </div>
         <button id="themeToggle" class="quiet" type="button" aria-label="切换日间主题">☀ 日间</button>
-        <div class="theme-picker">
+        <div class="sidebar-picker theme-picker">
           <button id="paletteToggle" class="quiet" type="button" aria-haspopup="menu" aria-controls="paletteMenu" aria-expanded="false" title="选择主题配色"><svg class="theme-picker-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3a9 9 0 1 0 0 18h1a2 2 0 0 0 1.4-3.4 1.5 1.5 0 0 1 1.1-2.6H18a3 3 0 0 0 3-3 9 9 0 0 0-9-9Z"/><circle cx="7.5" cy="10" r=".7"/><circle cx="10" cy="6.8" r=".7"/><circle cx="14.5" cy="7" r=".7"/><circle cx="17" cy="10.5" r=".7"/></svg><span>主题</span><span aria-hidden="true">⌃</span></button>
-          <div id="paletteMenu" class="theme-menu" role="menu" aria-label="主题配色" hidden>
+          <div id="paletteMenu" class="sidebar-menu theme-menu" role="menu" aria-label="主题配色" hidden>
             <button type="button" role="menuitemradio" data-palette-option="green" aria-checked="true"><span class="theme-swatch" aria-hidden="true"></span><span>绿色</span><span class="theme-check" aria-hidden="true">✓</span></button>
             <button type="button" role="menuitemradio" data-palette-option="red" aria-checked="false"><span class="theme-swatch" aria-hidden="true"></span><span>红色</span><span class="theme-check" aria-hidden="true">✓</span></button>
             <button type="button" role="menuitemradio" data-palette-option="blue" aria-checked="false"><span class="theme-swatch" aria-hidden="true"></span><span>蓝色</span><span class="theme-check" aria-hidden="true">✓</span></button>

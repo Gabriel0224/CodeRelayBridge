@@ -1,3 +1,3 @@
 """Local desktop shell for the existing relay bridges, not a replacement bridge."""
-VERSION = '0.6.53'
+VERSION = '0.6.54'
 PRODUCT_NAME = 'CodeRelayBridge'
