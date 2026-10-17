@@ -715,7 +715,7 @@ class Relay:
             capabilities = h.get('capabilities', {})
             if 'actions' in capabilities and action not in capabilities['actions']:
                 raise ValueError('该功能尚未接入目标应用的原生接口')
-            thread_actions = {'watch', 'mark_read', 'send', 'steer', 'archive', 'unarchive', 'move_project', 'update_settings', 'fetch_asset', 'update_permissions', 'load_older', 'attach_thread', 'rename_thread', 'fork_thread', 'upload_asset_chunk', 'attach_local_file', 'queue_edit', 'queue_delete', 'queue_send_now', 'queue_reorder', 'resolve_request', 'answer_choice', 'native_read', 'native_action'}
+            thread_actions = {'watch', 'mark_read', 'send', 'steer', 'archive', 'unarchive', 'move_project', 'update_settings', 'fetch_asset', 'update_permissions', 'load_older', 'attach_thread', 'rename_thread', 'fork_thread', 'upload_asset_chunk', 'attach_local_file', 'queue_edit', 'queue_delete', 'queue_send_now', 'queue_reorder', 'queue_resume', 'resolve_request', 'answer_choice', 'native_read', 'native_action'}
             if action in thread_actions and (not any((row['id'] == tid for row in h['catalog']))):
                 raise ValueError('没有找到该对话')
         cid = cid or str(uuid.uuid4())
@@ -1147,7 +1147,7 @@ def handler_factory(app):
                 if self.path == '/api/command':
                     data = self.body()
                     action = data.get('action')
-                    valid_actions = {'watch', 'mark_read', 'send', 'steer', 'stop_turn', 'continue_turn', 'edit_last_user_turn', 'archive', 'unarchive', 'project_create', 'project_rename', 'project_delete', 'move_project', 'update_settings', 'update_permissions', 'new_thread', 'fetch_asset', 'load_older', 'attach_thread', 'rename_thread', 'fork_thread', 'upload_asset_chunk', 'attach_local_file', 'file_read_text', 'file_write_text', 'software_check', 'queue_edit', 'queue_delete', 'queue_send_now', 'queue_reorder', 'resolve_request', 'answer_choice', 'native_read', 'native_action', 'restart_client', 'start_app', 'start_bridge'}
+                    valid_actions = {'watch', 'mark_read', 'send', 'steer', 'stop_turn', 'continue_turn', 'edit_last_user_turn', 'archive', 'unarchive', 'project_create', 'project_rename', 'project_delete', 'move_project', 'update_settings', 'update_permissions', 'new_thread', 'fetch_asset', 'load_older', 'attach_thread', 'rename_thread', 'fork_thread', 'upload_asset_chunk', 'attach_local_file', 'file_read_text', 'file_write_text', 'software_check', 'queue_edit', 'queue_delete', 'queue_send_now', 'queue_reorder', 'queue_resume', 'resolve_request', 'answer_choice', 'native_read', 'native_action', 'restart_client', 'start_app', 'start_bridge'}
                     if action not in valid_actions:
                         raise ValueError('不支持的操作')
                     if action in ('send', 'steer'):
@@ -1178,7 +1178,7 @@ def handler_factory(app):
                         if not isinstance(payload, dict):
                             raise ValueError('指令参数格式错误')
                         message = json.dumps(payload, ensure_ascii=False, separators=(',', ':'))
-                        limit = 1200000 if action == 'file_write_text' else 900000 if action == 'upload_asset_chunk' else 40000 if action in ('native_action', 'new_thread', 'queue_edit', 'resolve_request', 'answer_choice') else 16000
+                        limit = 1200000 if action == 'file_write_text' else 900000 if action == 'upload_asset_chunk' else 40000 if action in ('native_action', 'new_thread', 'queue_edit', 'queue_resume', 'resolve_request', 'answer_choice') else 16000
                         if len(message) > limit:
                             raise ValueError('指令参数过长')
                     cid = app.queue(data['host'], data.get('thread', ''), action, message, data.get('id'))

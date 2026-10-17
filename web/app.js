@@ -798,8 +798,9 @@ async function runQueueAction(action, payload, successText) {
     const result = await issueCommand(action, {...target, payload});
     editingQueuedMessageId = '';
     queueRenderSignature = '';
-    $('sendResult').textContent = action === 'queue_send_now' ?
-      (result.behavior === 'start' ? '✓ 已立即发送' : '✓ 已介入当前任务') : successText;
+    $('sendResult').textContent = action === 'queue_resume' && result.pending ? '已请求继续队列，等待原 App 确认' :
+      action === 'queue_resume' && !result.resumed ? '队列当前未暂停' :
+      action === 'queue_send_now' ? (result.behavior === 'start' ? '✓ 已立即发送' : '✓ 已介入当前任务') : successText;
     await refresh();
   } catch (error) {
     $('sendResult').textContent = error.message;
@@ -814,11 +815,15 @@ async function runQueueAction(action, payload, successText) {
 
 function renderQueuedMessages(messages, running, operable) {
   const values = Array.isArray(messages) ? messages : [];
+  const interrupted = currentHost()?.applicationId !== 'deepseek' &&
+    values.some(value => value.pausedReason === 'Interrupted before the steer was accepted.');
+  const canResume = currentHost()?.applicationId !== 'deepseek' && currentHost()?.capabilities?.queueResume === true &&
+    supportsAction(currentHost(), 'queue_resume');
   const queueKey = selected ? historyKey() : '';
   const collapsed = queueCollapseOverrides.has(queueKey) ?
     queueCollapseOverrides.get(queueKey) : values.length > 1;
-  const signature = JSON.stringify([busy, operable, running, values.map(value =>
-    [value.id, value.text, value.pausedReason || '', (value.attachments || []).map(item =>
+  const signature = JSON.stringify([busy, operable, running, canResume, values.map(value =>
+    [value.id, value.text, value.pausedReason || '', value.submission?.status, (value.attachments || []).map(item =>
       [item.name, item.size ?? null])]), collapsed, editingQueuedMessageId]);
   if (signature === queueRenderSignature &&
       (!editingQueuedMessageId || values.some(value => value.id === editingQueuedMessageId))) return;
@@ -849,9 +854,25 @@ function renderQueuedMessages(messages, running, operable) {
   heading.textContent = `待发送 · ${values.length}`;
   toggle.append(heading);
   const hint = document.createElement('span');
-  hint.textContent = running ? '本轮结束后按顺序发送' : '等待桌面 App 接收';
+  hint.textContent = interrupted ? '队列已暂停' : running ? '本轮结束后按顺序发送' : '等待桌面 App 接收';
   header.append(toggle, hint);
   tray.append(header);
+  if (interrupted) {
+    const banner = document.createElement('div');
+    banner.className = 'queue-resume-banner';
+    banner.setAttribute('role', 'status');
+    const explanation = document.createElement('span');
+    explanation.textContent = '由于你中断了当前响应，队列已暂停';
+    const resume = document.createElement('button');
+    resume.type = 'button';
+    resume.className = 'secondary queue-action queue-resume';
+    resume.textContent = '继续';
+    resume.disabled = busy || !operable || running || !canResume || Boolean(editingQueuedMessageId);
+    if (!canResume) resume.title = '请更新目标客户端以支持继续队列';
+    resume.onclick = () => runQueueAction('queue_resume', {messageIds: values.map(value => value.id)}, '✓ 队列已继续');
+    banner.append(explanation, resume);
+    tray.append(banner);
+  }
   if (collapsed) return;
 
   values.forEach((message, index) => {
@@ -914,7 +935,7 @@ function renderQueuedMessages(messages, running, operable) {
         }
         content.append(files);
       }
-      if (message.pausedReason) {
+      if (message.pausedReason && message.pausedReason !== 'Interrupted before the steer was accepted.') {
         const paused = document.createElement('div');
         paused.className = 'queue-paused';
         paused.textContent = `已暂停：${message.pausedReason}`;

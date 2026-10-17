@@ -1088,6 +1088,9 @@ html[data-theme="light"] .message-retry:hover:not(:disabled) { background: var(-
   white-space: nowrap;
 }
 .queue-paused { margin-top: 4px; color: #e0a18f; font-size: max(5px, calc(9px * var(--ui-font-scale))); }
+.queue-resume-banner { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; padding: 8px 10px; margin-top: 6px; border: 1px solid var(--line); border-radius: 10px; color: var(--text); background: var(--panel); }
+.queue-resume-banner > span { flex: 1 1 180px; min-width: 0; overflow-wrap: anywhere; }
+.queue-resume-banner .queue-resume { flex: 0 0 auto; color: inherit; }
 .queue-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 5px; }
 .queue-actions .queue-action { border-radius: 999px; min-height: 29px; padding: 5px 10px; }
 .queue-actions .queue-delete { border-color: currentColor; }

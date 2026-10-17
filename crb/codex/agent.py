@@ -3464,6 +3464,14 @@ class HostAgent:
             if response.get('result', {}).get('ok') is not True:
                 raise RuntimeError('桌面 App 没有接受编辑重发')
             return {'ok': True, 'transport': 'desktop-ipc', 'method': response.get('method'), 'confirmedAt': time.time()}
+        if action == 'queue_resume':
+            with self.lock:
+                queued = copy.deepcopy(self.queued_followups.get(tid, []))
+            expected = payload.get('messageIds')
+            if not isinstance(expected, list) or not expected or any((not isinstance(value, str) or not 0 < len(value) <= 200 for value in expected)) or (expected != [message.get('id') for message in queued]):
+                raise RuntimeError('队列内容已经变化，请刷新后重试')
+            result = self.question_ui.resume_queue(tid, expected)
+            return {'ok': True, 'transport': 'desktop-native-queue', 'resumed': result['status'] == 'queue-resumed', 'pending': result['status'] == 'queue-resume-pending', 'confirmedAt': time.time()}
         if action in ('queue_edit', 'queue_delete', 'queue_send_now', 'queue_reorder'):
             message_id = str(payload.get('messageId', '')).strip()
             if action != 'queue_reorder' and (not 0 < len(message_id) <= 200):
@@ -3485,7 +3493,6 @@ class HostAgent:
                     context = {}
                     queued[index]['context'] = context
                 context['prompt'] = edited_text
-                queued[index].pop('pausedReason', None)
                 self.update_native_queue(tid, queued, target)
                 return {'ok': True, 'transport': 'desktop-native-queue', 'messageId': message_id, 'edited': True, 'confirmedAt': time.time()}
             if action == 'queue_delete':
@@ -3754,7 +3761,7 @@ class HostAgent:
                 with self.lock:
                     views = dict(list(self.last_sent.items())[:1])
                     pending_results = list(self.results.items())
-                    payload = {'host': self.cfg['host_id'], 'label': self.cfg['label'], 'desktopConnected': bool(self.ipc and self.ipc.connected), 'terminal': self.terminal_info, 'capabilities': {'softwarePackages': ['codex']}, 'catalog': [row.copy() for row in self.catalog], 'projects': self.projects, 'models': self.models, 'views': views}
+                    payload = {'host': self.cfg['host_id'], 'label': self.cfg['label'], 'desktopConnected': bool(self.ipc and self.ipc.connected), 'terminal': self.terminal_info, 'capabilities': {'queueResume': True, 'softwarePackages': ['codex']}, 'catalog': [row.copy() for row in self.catalog], 'projects': self.projects, 'models': self.models, 'views': views}
                 results = {}
                 result_bytes = 0
                 for cid, value in pending_results:

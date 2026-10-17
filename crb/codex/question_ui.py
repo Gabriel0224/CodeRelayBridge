@@ -1,4 +1,4 @@
-"""A narrowly scoped, same-user, loopback-only original Codex question UI adapter.
+"""Same-user, loopback-only question cleanup and explicit native queue resume.
 
 Only acknowledge native IDs after the original IPC has accepted the answer.
 Discover an explicitly enabled App debugger; never restart or enable it here.
@@ -129,6 +129,22 @@ class CodexQuestionUI:
             except Exception:
                 return {'status': 'unavailable'}
 
+    def resume_queue(self, thread_id, message_ids):
+        """Explicit user action, using the original coordinator, never a resend."""
+        if not isinstance(thread_id, str) or not 0 < len(thread_id) <= 200 or (not isinstance(message_ids, list)) or (not 0 < len(message_ids) <= 1000) or any((not isinstance(value, str) or not 0 < len(value) <= 200 for value in message_ids)) or (len(set(message_ids)) != len(message_ids)):
+            raise ValueError('队列标识无效')
+        with self.lock:
+            endpoint = discover_debugger()
+            if not endpoint or not verify_debugger(endpoint):
+                raise RuntimeError('原 App 尚未启用本机联动通道；请从 Relay 客户端启动 Codex 后重试')
+            try:
+                result = self._call(endpoint, {'operation': 'resume-interrupted-queue', 'platform': sys.platform, 'hostId': 'local', 'threadId': thread_id, 'messageIds': message_ids})
+                if result.get('status') not in {'queue-resumed', 'queue-not-paused', 'queue-resume-pending'}:
+                    raise RuntimeError('Unexpected native queue result')
+                return result
+            except Exception as exc:
+                raise RuntimeError('未能确认原 App 的队列恢复状态，请刷新核对；不会自动重试') from exc
+
     def acknowledge(self, thread_id, turn_id, replies):
         request = validate_ack(thread_id, turn_id, replies)
         with self.lock:
@@ -218,10 +234,12 @@ class CodexQuestionUI:
         parsed = urlsplit(url)
         if parsed.scheme != 'ws' or parsed.hostname != '127.0.0.1' or parsed.port != port or parsed.username or parsed.password or parsed.query or parsed.fragment or (not parsed.path.startswith('/devtools/page/')):
             raise ValueError('Non-local debugger rejected')
-        socket = websocket.create_connection(url, timeout=10, suppress_origin=True, http_proxy_host=None, http_no_proxy=['127.0.0.1', 'localhost', '::1'])
+        queue_resume = request.get('operation') == 'resume-interrupted-queue'
+        timeout = 42 if queue_resume else 10
+        socket = websocket.create_connection(url, timeout=timeout, suppress_origin=True, http_proxy_host=None, http_no_proxy=['127.0.0.1', 'localhost', '::1'])
         try:
-            socket.send(json.dumps({'id': 1, 'method': 'Runtime.evaluate', 'params': {'expression': UI_PROGRAM + '(' + json.dumps(request, ensure_ascii=True) + ')', 'awaitPromise': True, 'returnByValue': True, 'timeout': 8000}}))
-            deadline = time.monotonic() + 10
+            socket.send(json.dumps({'id': 1, 'method': 'Runtime.evaluate', 'params': {'expression': UI_PROGRAM + '(' + json.dumps(request, ensure_ascii=True) + ')', 'awaitPromise': True, 'returnByValue': True, 'timeout': 40000 if queue_resume else 8000}}))
+            deadline = time.monotonic() + timeout
             while time.monotonic() < deadline:
                 message = json.loads(socket.recv())
                 if message.get('id') != 1:
@@ -230,9 +248,9 @@ class CodexQuestionUI:
                 if message.get('error') or result.get('exceptionDetails'):
                     raise RuntimeError('Native question UI acknowledgement failed')
                 value = result.get('result', {}).get('value')
-                if not isinstance(value, dict) or value.get('status') not in {'closed', 'not-open', 'different-question-preserved', 'new-draft-preserved', 'unanswered-preserved', 'awaiting-native-acceptance', 'capacity-observed', 'capacity-not-rendered'}:
+                if not isinstance(value, dict) or value.get('status') not in {'closed', 'not-open', 'different-question-preserved', 'new-draft-preserved', 'unanswered-preserved', 'awaiting-native-acceptance', 'capacity-observed', 'capacity-not-rendered', 'queue-resumed', 'queue-not-paused', 'queue-resume-pending'}:
                     raise RuntimeError('Invalid acknowledgement result')
-                return value if request.get('operation') == 'capacity-retry-state' else {**value, 'answerDelivered': True}
+                return value if request.get('operation') in ('capacity-retry-state', 'resume-interrupted-queue') else {**value, 'answerDelivered': True}
             raise TimeoutError('Native UI acknowledgement timed out')
         finally:
             socket.close()

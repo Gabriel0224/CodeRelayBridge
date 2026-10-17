@@ -1,5 +1,5 @@
-// Local, version-reviewed adapter to the original App's own question selection.
-// No clicks, focus, resubmission, auth reads, or changes to installed App files.
+// Local, version-reviewed question cleanup and explicit native queue resume.
+// No clicks, focus, synthesized sends, auth reads or installed-file changes.
 (async (request) => {
   if (location.protocol !== 'app:' || location.host !== '-' || location.pathname !== '/index.html')
     throw new Error('Not the original Codex surface');
@@ -65,6 +65,83 @@
       const timer = setTimeout(() => finish({status: 'capacity-not-rendered', turnId: request.turnId}), 1200);
       observer.observe(document.documentElement, {childList: true, characterData: true, subtree: true});
     });
+  }
+  if (request.operation === 'resume-interrupted-queue') {
+    if (request.hostId !== 'local' || typeof request.threadId !== 'string' || !request.threadId ||
+        !Array.isArray(request.messageIds) || !request.messageIds.length || request.messageIds.length > 1000 ||
+        request.messageIds.some(id => typeof id !== 'string' || !id || id.length > 200) ||
+        new Set(request.messageIds).size !== request.messageIds.length) throw new Error('Invalid queue scope');
+    // The original queue's Continue callback calls this exact coordinator API.
+    // It handles both local and server-backed queues, unlike clearing pause
+    // flags or starting an empty turn through the follower IPC.
+    const queueContracts = {
+      win32: [
+        ['app-initial-5851df3f6cb1.js', 'c70d95da34ba7e5962a559dbf68d0102d10b4b47b877f5d9933629bb5a1f3a10', null, null, 'YPr', 'utn'],
+        ['app-initial-df84a35d942d.js', 'd7659a96f7d0cfe2249e089ef19675d09d04d6dd9569b550ddaa64722d4f13f3', null, null, 'YPr', 'utn'],
+      ],
+      darwin: [['app-initial-90eb42395b7d.js', '2687d59e8c67ccf81c7efb3820211070df303c6a200c9e0e8d604f26253f2f5e', null, null, 'YPr', 'utn']],
+      linux: [['app-initial-17317d71fd80.js', '3cec672b3ffa028c5e7d47eab4198ef0102bd04955e45282154de8aa3f840ce1',
+        'app-shared-6fc3d63f0486.js', 'e24dc1a9e516fb12b36edfe2ae984185ca1238787fcc19938501a097b1acd06c', 'v$t', 'U2t']],
+    };
+    const hash = async bytes => [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))]
+      .map(value => value.toString(16).padStart(2, '0')).join('');
+    async function verifiedAsset(name, expected) {
+      const controller = new AbortController(); let timer;
+      try {
+        const bytes = await Promise.race([(async () => {
+          const response = await fetch('/assets/' + name, {signal: controller.signal});
+          if (response.ok === false) throw new Error('Unavailable native queue asset');
+          return await response.arrayBuffer();
+        })(), new Promise((_, reject) => {timer = setTimeout(() => {
+          controller.abort(); reject(new Error('Native queue asset timed out'));
+        }, 1200);})]);
+        return await hash(bytes) === expected;
+      } finally {clearTimeout(timer);}
+    }
+    let contract = null;
+    for (const candidate of queueContracts[request.platform] || []) {
+      try {if (await verifiedAsset(candidate[0], candidate[1])) {contract = candidate; break;}} catch (_) {}
+    }
+    if (!contract) throw new Error('Unreviewed native queue version');
+    if (contract[2] && !await verifiedAsset(contract[2], contract[3])) throw new Error('Unreviewed native queue transport');
+    const native = await import('/assets/' + contract[0]);
+    const shared = contract[2] ? await import('/assets/' + contract[2]) : native;
+    const queueAtom = native[contract[5]], getRpc = shared[contract[4]];
+    if (!queueAtom?.scope || typeof getRpc !== 'function') throw new Error('Native queue contract changed');
+    let scope = null, visits = 0;
+    function findScope(fiber) {
+      if (!fiber || scope || visits++ > 30000) return;
+      if ([0, 11, 15].includes(fiber.tag)) {
+        let hook = fiber.memoizedState, count = 0;
+        while (hook && count++ < 300) {
+          const value = hook.memoizedState?.current;
+          if (value?.scope === queueAtom.scope && value.node && value.chain && typeof value.get === 'function') {scope = value; break;}
+          hook = hook.next;
+        }
+      }
+      findScope(fiber.child); findScope(fiber.sibling);
+    }
+    findScope(window.__codexRoot?._internalRoot?.current);
+    if (!scope) throw new Error('Native queue scope unavailable');
+    const key = {hostId: 'local', threadId: request.threadId};
+    const read = () => scope.get(queueAtom, key);
+    const fingerprint = values => Array.isArray(values) ? JSON.stringify(values.map(message =>
+      [message.id, message.pausedReason ?? null, message.submission?.status ?? null])) : null;
+    const messages = read(), interrupted = 'Interrupted before the steer was accepted.';
+    if (!Array.isArray(messages) || JSON.stringify(messages.map(message => message.id)) !== JSON.stringify(request.messageIds))
+      throw new Error('Native queue changed; refresh before continuing');
+    if (!messages.some(message => message.pausedReason === interrupted)) return {status: 'queue-not-paused'};
+    if (messages.some(message => ['sending', 'outcome-unknown'].includes(message.submission?.status)) ||
+        messages[0].pausedReason && messages[0].pausedReason !== interrupted) throw new Error('Native queue is not ready to continue');
+    const expected = fingerprint(messages);
+    const coordinator = await getRpc(scope, 'local').getTurnCoordinator();
+    // Re-read immediately before dispatch; never revive deleted or reordered items.
+    // Unobserved native selectors may produce a fresh but equivalent array.
+    if (fingerprint(read()) !== expected) throw new Error('Native queue changed; refresh before continuing');
+    await coordinator.resumeInterruptedQueuedMessages(request.threadId);
+    const after = read();
+    return {status: Array.isArray(after) && !after.some(message => message.pausedReason === interrupted)
+      ? 'queue-resumed' : 'queue-resume-pending'};
   }
   // Each tuple was reviewed against that platform's installed App, including
   // its original submit callback and accepted-answer parser. Unknown builds
