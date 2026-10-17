@@ -98,8 +98,16 @@
         return await hash(bytes) === expected;
       } finally {clearTimeout(timer);}
     }
+    // Background windows can throttle the timeout for a missing app:// asset.
+    // Prefer real loaded scripts, not failed probes recorded as fetch resources.
+    const loaded = typeof performance !== 'undefined' && typeof performance.getEntriesByType === 'function'
+      ? new Set(performance.getEntriesByType('resource').filter(entry => entry.initiatorType !== 'fetch')
+        .map(entry => entry.name.split(/[?#]/)[0])) : new Set();
+    const candidates = [...(queueContracts[request.platform] || [])].sort((a, b) =>
+      Number([...loaded].some(name => name.endsWith('/assets/' + b[0]))) -
+      Number([...loaded].some(name => name.endsWith('/assets/' + a[0]))));
     let contract = null;
-    for (const candidate of queueContracts[request.platform] || []) {
+    for (const candidate of candidates) {
       try {if (await verifiedAsset(candidate[0], candidate[1])) {contract = candidate; break;}} catch (_) {}
     }
     if (!contract) throw new Error('Unreviewed native queue version');

@@ -79,8 +79,8 @@
       "exportSha256": "7133c7d609d1a3b2697fef0640c787e394b037bb2ca20460ded4c3df3c6a4949"
     },
     "crb/codex/question_ui.js": {
-      "canonicalSha256": "642c4949eb21d5f4142b1e76370fe0aea01b8b4425c798396afa620ed7a5bb12",
-      "exportSha256": "642c4949eb21d5f4142b1e76370fe0aea01b8b4425c798396afa620ed7a5bb12"
+      "canonicalSha256": "1679d9b9cff8330cd367a34ba1908b738b21073c7247df1be5b9c81c2b7af129",
+      "exportSha256": "1679d9b9cff8330cd367a34ba1908b738b21073c7247df1be5b9c81c2b7af129"
     },
     "crb/codex/question_ui.py": {
       "canonicalSha256": "4468695f79c312f4f6c705b242d7c4c8980343963670de970d80846820b58062",
