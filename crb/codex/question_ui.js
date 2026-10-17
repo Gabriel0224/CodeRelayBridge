@@ -167,6 +167,10 @@
     'app-initial-df84a35d942d.js', 'd7659a96f7d0cfe2249e089ef19675d09d04d6dd9569b550ddaa64722d4f13f3',
     'app-initial-df84a35d942d.js', 'd7659a96f7d0cfe2249e089ef19675d09d04d6dd9569b550ddaa64722d4f13f3',
     'P6n', 'N6n', 'L6n', 'Vxr', 'single-replies']);
+  if (request.platform === 'win32') candidates.push([
+    'app-initial-5851df3f6cb1.js', 'c70d95da34ba7e5962a559dbf68d0102d10b4b47b877f5d9933629bb5a1f3a10',
+    'app-initial-5851df3f6cb1.js', 'c70d95da34ba7e5962a559dbf68d0102d10b4b47b877f5d9933629bb5a1f3a10',
+    'P6n', 'N6n', 'L6n', 'Vxr', 'single-replies']);
   if (request.platform === 'darwin') candidates.push([
     'app-initial-90eb42395b7d.js', '2687d59e8c67ccf81c7efb3820211070df303c6a200c9e0e8d604f26253f2f5e',
     'app-initial-90eb42395b7d.js', '2687d59e8c67ccf81c7efb3820211070df303c6a200c9e0e8d604f26253f2f5e',
