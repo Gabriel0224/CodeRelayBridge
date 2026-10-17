@@ -3564,7 +3564,10 @@ class HostAgent:
     def deliver_native_message(self, tid, command_id, target, method, params, version=1, steering=False, receipt_context=None, receipt_id=None):
         native_id = receipt_id or command_id
         try:
-            return self.ipc.request(method, params, version=version, target=target, timeout=45)
+            response = self.ipc.request(method, params, version=version, target=target, timeout=45)
+            if (response.get('result') or {}).get('ok') is False:
+                raise RuntimeError('原桌面 App 明确拒绝了消息，未标记为已送达')
+            return response
         except (TimeoutError, ConnectionError):
             with self.lock:
                 slot = self.states.get(tid) or {}

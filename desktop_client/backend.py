@@ -166,6 +166,21 @@ def native_app_identity(key, rows):
     pids = {row['pid'] for row in matching}
     return sorted((f"{row['pid']}:{row.get('create_time', '')}" for row in matching if row.get('ppid') not in pids))
 
+def windows_task_error(error, stage):
+    """Useful COM failure location without dumping account, XML or paths."""
+    if isinstance(error, ClientError):
+        return error
+    codes = []
+    candidates = [getattr(error, 'hresult', None)]
+    info = getattr(error, 'excepinfo', None)
+    if isinstance(info, tuple) and len(info) > 5:
+        candidates.append(info[5])
+    for value in candidates:
+        if isinstance(value, int) and (not isinstance(value, bool)):
+            codes.append(f'0x{value & 4294967295:08X}')
+    detail = ' / '.join(dict.fromkeys(codes)) or type(error).__name__
+    return ClientError('Windows 计划任务失败：' + stage + '（' + detail + '）。请检查 Task Scheduler 服务及其事件日志；不要反复点击启动。')
+
 class WindowsTasks:
     """Task Scheduler COM: no periodic cmd/PowerShell windows and one process owner."""
 
@@ -173,16 +188,26 @@ class WindowsTasks:
         import pythoncom
         import win32com.client
         pythoncom.CoInitialize()
-        service = folder = collection = task = None
+        service = folder = collection = task = error = None
+        stage = 'Schedule.Service'
         try:
             service = win32com.client.Dispatch('Schedule.Service')
+            stage = 'Connect'
             service.Connect()
+            stage = 'GetFolder'
             folder = service.GetFolder('\\')
+            stage = 'GetTasks'
             collection = folder.GetTasks(1)
+            stage = 'EnumerateTasks'
             return any((str(task.Name) == spec.task_name for task in collection))
+        except Exception as exc:
+            error = windows_task_error(exc, stage)
+            exc.__traceback__ = None
         finally:
             task = collection = folder = service = None
             pythoncom.CoUninitialize()
+        if error:
+            raise error from None
 
     def create(self, spec):
         if not spec.managed_executable or not spec.managed_executable.exists():
@@ -244,17 +269,24 @@ class WindowsTasks:
         service = task = None
         error = None
         result = None
+        stage = 'Schedule.Service'
         try:
             service = win32com.client.Dispatch('Schedule.Service')
+            stage = 'Connect'
             service.Connect()
-            task = service.GetFolder('\\').GetTask(spec.task_name)
+            stage = 'GetFolder'
+            folder = service.GetFolder('\\')
+            stage = 'GetTask'
+            task = folder.GetTask(spec.task_name)
+            stage = 'ValidateTask'
             self.validate(task, spec)
+            stage = 'TaskOperation'
             result = callback(task)
         except Exception as exc:
-            error = ClientError(redact(str(exc)))
+            error = windows_task_error(exc, stage)
             exc.__traceback__ = None
         finally:
-            task = service = None
+            task = folder = service = None
             pythoncom.CoUninitialize()
         if error:
             raise error from None
@@ -284,15 +316,24 @@ class WindowsTasks:
         import pythoncom
         import win32com.client
         pythoncom.CoInitialize()
-        service = folder = registered = None
+        service = folder = registered = error = None
+        stage = 'Schedule.Service'
         try:
             service = win32com.client.Dispatch('Schedule.Service')
+            stage = 'Connect'
             service.Connect()
+            stage = 'GetFolder'
             folder = service.GetFolder('\\')
+            stage = 'RegisterTask'
             registered = folder.RegisterTask(spec.task_name, xml, flags, None, None, 3)
+        except Exception as exc:
+            error = windows_task_error(exc, stage)
+            exc.__traceback__ = None
         finally:
             registered = folder = service = None
             pythoncom.CoUninitialize()
+        if error:
+            raise error from None
 
     def pause(self, spec):
 
@@ -658,7 +699,7 @@ class Preferences:
         self.path = self.directory / 'preferences.json'
 
     def load(self):
-        defaults = {'panel_url': '', 'close_to_tray': False, 'codex_question_link': False}
+        defaults = {'panel_url': '', 'close_to_tray': False, 'codex_question_link': True}
         if self.path.exists():
             try:
                 saved = json.loads(self.path.read_text(encoding='utf-8'))

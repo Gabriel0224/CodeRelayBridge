@@ -110,6 +110,10 @@ class CodexQuestionUI:
         self.pending_busy = False
         self.pending_dirty = set()
 
+    @staticmethod
+    def pending_key(request):
+        return (request['threadId'], request['turnId'], tuple(sorted((reply['questionItemId'] for reply in request['replies']))))
+
     def capacity_retry_state(self, thread_id, turn_id):
         if any((not isinstance(value, str) or not value or len(value) > 200 for value in (thread_id, turn_id))):
             raise ValueError('Invalid native retry scope')
@@ -136,7 +140,7 @@ class CodexQuestionUI:
                     self.retry_after = time.monotonic() + 20
                     return {'status': 'unavailable', 'answerDelivered': True, 'detail': '答案已提交；原 App 尚未启用仅本机的提问窗口联动通道。'}
                 result = self._call(endpoint, request)
-                key = (thread_id, turn_id)
+                key = self.pending_key(request)
                 with self.pending_lock:
                     if result.get('status') == 'awaiting-native-acceptance':
                         deadline = self.pending.get(key, (None, time.monotonic() + 600))[1]
@@ -144,16 +148,21 @@ class CodexQuestionUI:
                         while len(self.pending) > 16:
                             self.pending.pop(next(iter(self.pending)))
                     else:
-                        self.pending.pop(key, None)
+                        current = self.pending.get(key)
+                        if current and current[0] == request:
+                            self.pending.pop(key, None)
                 return result
             except Exception:
+                self.retry_after = time.monotonic() + 20
                 return {'status': 'unavailable', 'answerDelivered': True, 'detail': '答案已提交；原 App 窗口联动未确认，不会重发答案。'}
 
     def defer_ack(self, thread_id, turn_id, replies):
         """UI cleanup is asynchronous, never part of the send/receipt deadline."""
         request = validate_ack(thread_id, turn_id, replies)
+        key = self.pending_key(request)
         with self.pending_lock:
-            self.pending[thread_id, turn_id] = (request, time.monotonic() + 600)
+            previous = self.pending.get(key)
+            self.pending[key] = (request, previous[1] if previous else time.monotonic() + 600)
             while len(self.pending) > 16:
                 self.pending.pop(next(iter(self.pending)))
         self.notify_native_change(thread_id)
@@ -185,11 +194,9 @@ class CodexQuestionUI:
                             return
                         tid = self.pending_dirty.pop()
                         pending = [(key, value[0]) for key, value in self.pending.items() if key[0] == tid and value[1] > time.monotonic()]
-                    for (tid, turn), request in pending:
+                    for key, request in pending:
+                        tid, turn = key[:2]
                         result = self.acknowledge(tid, turn, request['replies'])
-                        if result.get('status') == 'unavailable':
-                            with self.pending_lock:
-                                self.pending.pop((tid, turn), None)
             except Exception:
                 with self.pending_lock:
                     self.pending_busy = False
@@ -211,10 +218,10 @@ class CodexQuestionUI:
         parsed = urlsplit(url)
         if parsed.scheme != 'ws' or parsed.hostname != '127.0.0.1' or parsed.port != port or parsed.username or parsed.password or parsed.query or parsed.fragment or (not parsed.path.startswith('/devtools/page/')):
             raise ValueError('Non-local debugger rejected')
-        socket = websocket.create_connection(url, timeout=7, suppress_origin=True, http_proxy_host=None, http_no_proxy=['127.0.0.1', 'localhost', '::1'])
+        socket = websocket.create_connection(url, timeout=10, suppress_origin=True, http_proxy_host=None, http_no_proxy=['127.0.0.1', 'localhost', '::1'])
         try:
-            socket.send(json.dumps({'id': 1, 'method': 'Runtime.evaluate', 'params': {'expression': UI_PROGRAM + '(' + json.dumps(request, ensure_ascii=True) + ')', 'awaitPromise': True, 'returnByValue': True, 'timeout': 5000}}))
-            deadline = time.monotonic() + 7
+            socket.send(json.dumps({'id': 1, 'method': 'Runtime.evaluate', 'params': {'expression': UI_PROGRAM + '(' + json.dumps(request, ensure_ascii=True) + ')', 'awaitPromise': True, 'returnByValue': True, 'timeout': 8000}}))
+            deadline = time.monotonic() + 10
             while time.monotonic() < deadline:
                 message = json.loads(socket.recv())
                 if message.get('id') != 1:

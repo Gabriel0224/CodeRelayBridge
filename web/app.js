@@ -3627,7 +3627,7 @@ function renderAsyncQuestions(container, item, state) {
     if (input.disabled !== disabled) input.disabled = disabled;
   });
   if (disabled) {
-    feedback.textContent = state === 'submitted' ? '✓ 已送达原对话' :
+    feedback.textContent = state === 'submitted' ? '答案已提交，等待原 App 确认；不会重复发送。' :
       state === 'submitting' ? '正在把选择送到原对话…' :
       '接入目标机的原对话后可选择';
   } else if (form.choiceState && form.choiceState !== 'ready') {
@@ -3659,6 +3659,7 @@ function renderAsyncQuestions(container, item, state) {
 function clearQuestionDock() {
   const dock = $('questionDock');
   dock.hidden = true;dock.replaceChildren();dock.questionPageKey = '';dock.onQuestionPageChange = null;
+  dock.questionVisibilityState = null;
 }
 
 function renderQuestionDock(thread, items = combinedHistoryItems(thread)) {
@@ -3672,14 +3673,15 @@ function renderQuestionDock(thread, items = combinedHistoryItems(thread)) {
     session = {cards: new Map(), activeKey: ''};questionDraftSessions.set(identity, session);
     while (questionDraftSessions.size > 20) questionDraftSessions.delete(questionDraftSessions.keys().next().value);
   }
+  dock.questionVisibilityState = session.visibility ||= {closed: false, skipped: new Set()};
   const body = window.CRBQuestionDeck.body(dock);
   const live = Boolean(!threadPreviewOnly && current?.id === thread.id && current.owned && current.online);
   const next = new Map();
   for (const [key, item] of pendingQuestionItems(thread, items)) {
     const answerKey = asyncQuestionKey(item);
-    if (submittedChoices.has(answerKey)) continue;
     const record = session.cards.get('async/' + key) || document.createElement('article');
-    renderAsyncQuestions(record, item, choiceBusy.has(answerKey) ? 'submitting' : live && thread.source === 'desktop-live' ? 'ready' : 'offline');
+    renderAsyncQuestions(record, item, submittedChoices.has(answerKey) ? 'submitted' :
+      choiceBusy.has(answerKey) ? 'submitting' : live && thread.source === 'desktop-live' ? 'ready' : 'offline');
     next.set('async/' + key, record);
   }
   for (const request of thread.requests || []) {
@@ -4687,7 +4689,10 @@ function pendingQuestionItems(thread, items) {
     if (!['agentMessage', 'assistantMessage'].includes(item.type) || !Array.isArray(item.questions)) continue;
     const questions = item.questions.filter((question, index) => {
       const id = question.questionItemId || JSON.stringify(['request_user_input_async', item.id, index]);
-      return native ? native.has(id) : !answered.has(id);
+      // Accepted native messages can arrive before the pending-ID projection.
+      // Never let a lagging projection resurrect a question already answered
+      // in original history. Local optimistic replies are not in this set.
+      return (!native || native.has(id)) && !answered.has(id);
     });
     if (questions.length) pending.set(itemKey(item), {...item, questions});
   }

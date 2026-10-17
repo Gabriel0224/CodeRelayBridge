@@ -497,9 +497,9 @@ class MainWindow(QMainWindow):
         layout.addWidget(note('未勾选时，关闭窗口即断开。无可用托盘时仍关闭并断开，避免客户端隐藏后无法打开。\n“关闭并断开”和 Ctrl+Q 始终彻底退出，不保留独立桥接后台。'))
         self.codex_question_link = QCheckBox('启动 Codex 时启用提问框同步（仅本机）')
         self.codex_question_link.setObjectName('codex_question_link')
-        self.codex_question_link.setChecked(self.settings.get('codex_question_link', False))
+        self.codex_question_link.setChecked(self.settings.get('codex_question_link', True))
         layout.addWidget(self.codex_question_link)
-        layout.addWidget(note('仅客户端启动 Codex 时启用 127.0.0.1 控制通道，用于网页代答后收起原 App 提问框。\n该通道具有 App 控制权限，不暴露到公网；保存设置不会重启已运行的 App。'))
+        layout.addWidget(note('默认随客户端启动 Codex 时启用 127.0.0.1 控制通道，用于同步原 App 提问框。\n该通道具有 App 控制权限，不暴露到公网；保存设置不会重启已运行的 App，也不会改动其他启动入口。'))
         if sys.platform == 'darwin':
             from desktop_client.mac_permissions import permission_widget
             layout.addWidget(permission_widget(page))
@@ -757,7 +757,7 @@ class MainWindow(QMainWindow):
         self.busy_key = 'app:' + key
         self.set_controls_busy(True)
         self.notice.setText('正在启动 ' + self.manager.specs[key].title + ' 桌面 App…')
-        linked = key == 'codex' and self.settings.get('codex_question_link', False)
+        linked = key == 'codex' and self.settings.get('codex_question_link', True)
 
         def launch_and_connect():
             result = self.app_launcher.launch(key, question_link=True) if linked else self.app_launcher.launch(key)
@@ -958,7 +958,7 @@ class MainWindow(QMainWindow):
         self.url.setText(self.settings['panel_url'])
         self.autostart.setChecked(self.startup.enabled())
         self.close_to_tray.setChecked(self.settings.get('close_to_tray', False))
-        self.codex_question_link.setChecked(self.settings.get('codex_question_link', False))
+        self.codex_question_link.setChecked(self.settings.get('codex_question_link', True))
         self.update_close_behavior()
 
     def reload_connection(self):

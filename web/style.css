@@ -535,6 +535,10 @@ body:not(.mobile-layout).sidebar-collapsed #sidebarResizer { display: none; }
   flex-wrap: wrap; gap: 12px; padding: 8px 12px; border-bottom: 1px solid var(--line); }
 .question-deck-header > strong { min-width: 0; overflow-wrap: anywhere; }
 .question-deck-header nav { display: flex; align-items: center; gap: 8px; flex: none; }
+.question-deck-header { flex-wrap: wrap; }
+.question-deck-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+#questionDock.question-deck-collapsed { min-height: 0; flex: none; }
+.question-deck-collapsed .question-deck-header { padding-top: 5px; padding-bottom: 5px; }
 .question-deck-header button { min-height: 30px; padding: 5px 8px; font-size: .85em; }
 .question-page-counter { color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .question-deck-body { min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 9px 12px; }

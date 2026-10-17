@@ -59,7 +59,7 @@ class ClientControlLink:
                     from desktop_client.native_apps import DesktopAppLauncher
                     self.launcher = DesktopAppLauncher()
                 from desktop_client.backend import Preferences
-                linked = key == 'codex' and Preferences(self.session.store.root).load().get('codex_question_link', False)
+                linked = key == 'codex' and Preferences(self.session.store.root).load().get('codex_question_link', True)
                 self.launcher.launch(key, question_link=True) if linked else self.launcher.launch(key)
                 self.session.start(self.session.specs[key], remember=True)
             elif action == 'start_bridge':

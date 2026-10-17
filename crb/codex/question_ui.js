@@ -77,17 +77,60 @@
     linux: ['app-initial-929a3344d5d0.js', '5d51a4b80d01286b08e0491818733bb80998a3165c380e045a00b8c075a49a43',
       'app-shared-cc1fe93eb683.js', 'fd664125b278cc1e16bb4cad9cc4f44392af0426404e92a8ed2514d53f8e3be4', 'SBn', 'xBn', 'EBn', 'C3'],
   };
-  const contract = contracts[request.platform];
-  if (!contract) throw new Error('Unreviewed native question UI platform');
+  const candidates = contracts[request.platform] ? [contracts[request.platform]] : [];
+  if (request.platform === 'win32') candidates.push([
+    'app-initial-df84a35d942d.js', 'd7659a96f7d0cfe2249e089ef19675d09d04d6dd9569b550ddaa64722d4f13f3',
+    'app-initial-df84a35d942d.js', 'd7659a96f7d0cfe2249e089ef19675d09d04d6dd9569b550ddaa64722d4f13f3',
+    'P6n', 'N6n', 'L6n', 'Vxr', 'single-replies']);
+  if (request.platform === 'darwin') candidates.push([
+    'app-initial-90eb42395b7d.js', '2687d59e8c67ccf81c7efb3820211070df303c6a200c9e0e8d604f26253f2f5e',
+    'app-initial-90eb42395b7d.js', '2687d59e8c67ccf81c7efb3820211070df303c6a200c9e0e8d604f26253f2f5e',
+    'P6n', 'N6n', 'L6n', 'Vxr', 'single-replies']);
+  if (request.platform === 'linux') candidates.push([
+    'app-initial-17317d71fd80.js', '3cec672b3ffa028c5e7d47eab4198ef0102bd04955e45282154de8aa3f840ce1',
+    'app-shared-6fc3d63f0486.js', 'e24dc1a9e516fb12b36edfe2ae984185ca1238787fcc19938501a097b1acd06c',
+    'dKn', 'uKn', 'mKn', 'L8']);
+  if (!candidates.length) throw new Error('Unreviewed native question UI platform');
+  // An absent app:// asset is not guaranteed to finish with HTTP 404. Prefer
+  // the already loaded bundle, then bound each local read including its body.
+  // Otherwise a changed App build can leave an acknowledgement pending forever.
+  const loaded = typeof performance !== 'undefined' && typeof performance.getEntriesByType === 'function'
+    ? new Set(performance.getEntriesByType('resource').map(entry => entry.name.split(/[?#]/)[0])) : new Set();
+  candidates.reverse().sort((a, b) => Number([...loaded].some(name => name.endsWith('/assets/' + b[0]))) -
+    Number([...loaded].some(name => name.endsWith('/assets/' + a[0]))));
+  const verifiedBytes = new Map();
+  async function localAsset(name) {
+    if (verifiedBytes.has(name)) return verifiedBytes.get(name);
+    const controller = new AbortController();
+    let timer;
+    try {
+      const bytes = await Promise.race([
+        (async () => {
+          const response = await fetch('/assets/' + name, {signal: controller.signal});
+          if (response.ok === false) throw new Error('Native asset unavailable');
+          return await response.arrayBuffer();
+        })(),
+        new Promise((_, reject) => {timer = setTimeout(() => {
+          controller.abort(); reject(new Error('Native asset read timed out'));
+        }, 1200);}),
+      ]);
+      verifiedBytes.set(name, bytes);
+      return bytes;
+    } finally {clearTimeout(timer);}
+  }
+  let contract = null;
+  for (const candidate of candidates) {
+    let bytes;
+    try {bytes = await localAsset(candidate[0]);} catch (_) {continue;}
+    const hash = [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))]
+      .map(b => b.toString(16).padStart(2, '0')).join('');
+    if (hash === candidate[1]) {contract = candidate; break;}
+  }
+  if (!contract) throw new Error('Unreviewed native question UI version');
   const asset = '/assets/' + contract[0];
-  const expected = contract[1];
-  const bytes = await (await fetch(asset)).arrayBuffer();
-  const hash = [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))]
-    .map(b => b.toString(16).padStart(2, '0')).join('');
-  if (hash !== expected) throw new Error('Unreviewed native question UI version');
   const native = await import(asset);
   const sharedAsset = '/assets/' + contract[2];
-  const sharedBytes = await (await fetch(sharedAsset)).arrayBuffer();
+  const sharedBytes = await localAsset(contract[2]);
   const sharedHash = [...new Uint8Array(await crypto.subtle.digest('SHA-256', sharedBytes))]
     .map(b => b.toString(16).padStart(2, '0')).join('');
   if (sharedHash !== contract[3])
@@ -152,7 +195,20 @@
         .slice(-12).map(entry => history.history.entitiesByKey[entry.value]).filter(Boolean)
       : (conversation.turns ?? []).slice(-12);
     const items = [original, ...turns.filter(turn => turn !== original)].flatMap(turn => turn.items ?? []);
-    return parseAccepted(items).answersByQuestionItemId;
+    if (contract[8] !== 'single-replies') return parseAccepted(items).answersByQuestionItemId;
+    // This reviewed App build exposes its exact envelope parser separately.
+    // Only original accepted messages, never local drafts or queued steers,
+    // establish acceptance. Preserve native order and exact question identity.
+    const accepted = new Map();
+    for (const item of items) {
+      if (item.type !== 'userMessage' && !(item.type === 'steeringUserMessage' && item.status === 'accepted')) continue;
+      const input = item.type === 'userMessage' ? item.content : item.input;
+      if (!Array.isArray(input) || input.length !== 1 || input[0]?.type !== 'text') continue;
+      for (const reply of parseAccepted(input[0].text) || []) {
+        if (answers.has(reply.questionItemId)) accepted.set(reply.questionItemId, reply.answer);
+      }
+    }
+    return accepted;
   }
   // Read App-confirmed acceptance, not the relay's optimistic state.
   // Do not clear another turn, an unanswered question, or a later edited draft.

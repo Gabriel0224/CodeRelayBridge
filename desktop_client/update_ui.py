@@ -38,14 +38,20 @@ class UpdateDialog(QDialog):
         layout.addLayout(row)
         self.tokens = {}
         self.remember = {}
+        self.credential_status = {}
+        self.saved_credentials = {}
         for provider in ('github', 'gitee'):
             field = QLineEdit()
             field.setEchoMode(QLineEdit.EchoMode.Password)
             field.setPlaceholderText('GitHub 令牌：私有仓库 Contents 只读权限' if provider == 'github' else 'Gitee 令牌：私有仓库读取权限')
             keep = QCheckBox('将令牌保存到系统密钥库（不写入配置或日志）')
+            saved = QLabel('正在检测已保存的授权…')
+            saved.setWordWrap(True)
             layout.addWidget(field)
             layout.addWidget(keep)
+            layout.addWidget(saved)
             self.tokens[provider], self.remember[provider] = (field, keep)
+            self.credential_status[provider] = saved
         self.version_notice = QLabel('')
         self.version_notice.setWordWrap(True)
         layout.addWidget(self.version_notice)
@@ -86,6 +92,29 @@ class UpdateDialog(QDialog):
         self.downloadProgress.connect(self.show_progress)
         self.stageChanged.connect(self.show_stage)
         self.auth_visibility()
+        self.load_credentials()
+
+    def load_credentials(self):
+        """Only return presence, never place a stored secret into UI state."""
+        if not self.updater.requires_auth or self.job:
+            return
+        requested = self.requested_channels()
+
+        def operation():
+            result = {}
+            for provider in requested:
+                try:
+                    result[provider] = bool(TokenStore(provider).get(self.updater.repo))
+                except UpdateError:
+                    result[provider] = None
+            return result
+        self.submit('credentials', operation)
+
+    def show_credentials(self, states):
+        for provider, saved in states.items():
+            self.saved_credentials[provider] = saved
+            self.remember[provider].setChecked(saved is True)
+            self.credential_status[provider].setText('已保存授权，留空即可自动使用；填写新令牌可替换。' if saved is True else '没有已保存的授权；填写令牌并勾选保存后检查更新。' if saved is False else '无法读取系统密钥库；可填写令牌仅供本次使用。')
 
     def requested_channels(self):
         value = self.channel.currentData()
@@ -96,6 +125,7 @@ class UpdateDialog(QDialog):
             visible = self.updater.requires_auth and provider in self.requested_channels()
             field.setVisible(visible)
             self.remember[provider].setVisible(visible)
+            self.credential_status[provider].setVisible(visible)
 
     def channel_changed(self):
         self.release = None
@@ -107,6 +137,8 @@ class UpdateDialog(QDialog):
             self.status.setText('更新通道已保存，请检查更新。')
         except (UpdateError, OSError):
             self.status.setText('无法保存通道选择；本次选择仍有效。')
+        if any((provider not in self.saved_credentials for provider in self.requested_channels())):
+            self.load_credentials()
 
     def submit(self, name, callback):
         if self.job:
@@ -134,27 +166,33 @@ class UpdateDialog(QDialog):
 
         def operation():
             self.updater.tokens.clear()
+            states = {}
+            warnings = []
             if self.updater.requires_auth:
                 for provider in requested:
                     token = entered.get(provider)
                     if not token:
                         try:
                             token = TokenStore(provider).get(self.updater.repo)
-                        except UpdateError:
+                            states[provider] = bool(token)
+                        except UpdateError as error:
                             token = ''
+                            states[provider] = None
+                            warnings.append(str(error))
                     if token:
                         self.updater.tokens[provider] = token
             result = self.updater.check(selected, cancelled=self.cancelled.is_set)
-            warnings = []
             for provider in requested if self.updater.requires_auth else ():
                 if entered.get(provider) and remember[provider] and (provider in self.updater.checked):
                     if self.cancelled.is_set():
                         raise UpdateCancelled('更新已取消，原程序未改变。')
                     try:
                         TokenStore(provider).save(self.updater.repo, entered[provider])
+                        states[provider] = True
                     except UpdateError as error:
                         warnings.append(str(error))
             result['credentialWarnings'] = warnings
+            result['savedCredentials'] = states
             return result
         self.submit('check', operation)
 
@@ -222,7 +260,10 @@ class UpdateDialog(QDialog):
         self.progress.hide()
         if self.cancelled.is_set():
             self.status.setText('更新已取消，原程序未改变。')
+        elif name == 'credentials':
+            self.show_credentials(value)
         elif name == 'check':
+            self.show_credentials(value.get('savedCredentials', {}))
             self.release = value
             if value['available']:
                 self.version_notice.setText('已有新版本 ' + value['latest'])
@@ -239,6 +280,7 @@ class UpdateDialog(QDialog):
             if warnings:
                 self.status.setText(self.status.text() + '\n' + '\n'.join(warnings))
         elif name == 'forget':
+            self.show_credentials({provider: False for provider in self.requested_channels()})
             self.status.setText('已移除所选通道的本机更新授权。')
         elif name == 'prepare':
             self.plan = value
