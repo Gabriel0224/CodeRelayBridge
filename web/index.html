@@ -139,6 +139,8 @@
     <div id="composer">
       <div class="composer-top">
         <div class="composer-settings-bar">
+          <div id="queueControls" class="queue-controls" hidden></div>
+          <div class="composer-model-settings">
           <button id="modelSettingsToggle" class="model-settings-toggle" type="button" aria-expanded="false" aria-controls="modelControls" hidden><span id="modelSettingsSummary">当前模型 · 推理档位</span><span class="settings-chevron" aria-hidden="true">⌄</span></button>
           <label id="quickSpeedControl" class="permission-switch" for="quickSpeed" title="加速模式会增加额度消耗；实际可用性由原 App 决定。" hidden>
             <input id="quickSpeed" type="checkbox" role="switch" aria-describedby="speedUsageNote"><span id="quickSpeedLabel">闪电加速</span>
@@ -147,6 +149,7 @@
           <label class="permission-switch" for="fullAccess" title="控制原 Codex 对话后续轮次的文件、命令与网络访问权限" hidden>
             <input id="fullAccess" type="checkbox"><span>完全访问</span>
           </label>
+          </div>
           <button id="jumpBottom" type="button" aria-label="跳至最新" title="跳至最新" hidden aria-hidden="true">↓</button>
         </div>
         <div id="modelControls" class="model-controls" hidden>

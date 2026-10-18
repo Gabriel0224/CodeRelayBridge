@@ -819,8 +819,11 @@ function renderQueuedMessages(messages, running, operable) {
       (!editingQueuedMessageId || values.some(value => value.id === editingQueuedMessageId))) return;
   queueRenderSignature = signature;
   const tray = $('queuedMessages');
+  const controls = $('queueControls');
   tray.replaceChildren();
-  tray.hidden = values.length === 0;
+  controls.replaceChildren();
+  controls.hidden = values.length === 0;
+  tray.hidden = values.length === 0 || (collapsed && !interrupted);
   tray.classList.toggle('collapsed', collapsed);
   if (!values.length) {
     editingQueuedMessageId = '';
@@ -832,6 +835,7 @@ function renderQueuedMessages(messages, running, operable) {
   toggle.type = 'button';
   toggle.className = 'queue-toggle';
   toggle.setAttribute('aria-expanded', String(!collapsed));
+  toggle.setAttribute('aria-controls', 'queuedMessages');
   toggle.setAttribute('aria-label', `${collapsed ? '展开' : '折叠'}待发送消息（${values.length} 条）`);
   toggle.disabled = Boolean(editingQueuedMessageId);
   toggle.textContent = collapsed ? '▸' : '▾';
@@ -846,7 +850,7 @@ function renderQueuedMessages(messages, running, operable) {
   const hint = document.createElement('span');
   hint.textContent = interrupted ? '队列已暂停' : running ? '本轮结束后按顺序发送' : '等待桌面 App 接收';
   header.append(toggle, hint);
-  tray.append(header);
+  controls.append(header);
   if (interrupted) {
     const banner = document.createElement('div');
     banner.className = 'queue-resume-banner';
@@ -3217,6 +3221,8 @@ function clearThread() {
   $('stopTurn').hidden = true;
   $('queuedMessages').replaceChildren();
   $('queuedMessages').hidden = true;
+  $('queueControls').replaceChildren();
+  $('queueControls').hidden = true;
   $('attachThread').hidden = true;
   $('modelSettingsToggle').hidden = true;
   $('quickSpeedControl').hidden = true;
@@ -3384,6 +3390,8 @@ async function selectThread(host, thread, revealSelection = false, userInitiated
   $('stopTurn').hidden = true;
   $('queuedMessages').replaceChildren();
   $('queuedMessages').hidden = true;
+  $('queueControls').replaceChildren();
+  $('queueControls').hidden = true;
   $('attachThread').hidden = true;
   $('status').textContent = '同步中…';
   // Selector changes restore a chat for context, but are not a chat-row tap.
