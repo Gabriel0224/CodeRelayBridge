@@ -26,6 +26,11 @@ APP_ID = 'deepseek'
 MAX_UPLOAD = 16 * 1024 * 1024
 ACTIONS = {'watch', 'attach_thread', 'mark_read', 'send', 'steer', 'stop_turn', 'new_thread', 'rename_thread', 'fork_thread', 'archive', 'unarchive', 'project_create', 'project_rename', 'project_delete', 'update_settings', 'load_older', 'queue_edit', 'queue_delete', 'queue_send_now', 'upload_asset_chunk', 'attach_local_file', 'resolve_request', 'fetch_asset', 'native_read', 'update_permissions', 'native_action'}
 PUBLIC_EVENTS = {'turn/start', 'turn/end', 'user/message', 'assistant/message', 'assistant/attempt', 'tool/call', 'tool/result', 'compaction/start', 'compaction/end', 'approval/asked', 'approval/decided', 'todo/write', 'llm/retry', 'llm/retry-started'}
+QUEUE_ATTACHMENT_EDIT_REASON = '原 App 不支持编辑含附件的待发送消息；原附件保持不变'
+
+def queue_text_editable(message):
+    content = message.get('content')
+    return bool(isinstance(content, list) and content and all((isinstance(block, dict) and block.get('type') == 'text' for block in content)))
 
 def numeric_fields(value, names):
     """Publish only named native numbers, not arbitrary projection/config fields."""
@@ -257,7 +262,7 @@ class SessionView:
         for q in self.projections.get('userQuestions', {}).get('active', []):
             if q['state'] in ('open', 'continued'):
                 pending.append({'id': q['callId'], 'method': 'item/tool/requestUserInput', 'questions': [{**x, 'isMultiSelect': x.get('multiSelect', False)} for x in q['questions']]})
-        queued = [{'id': m['id'], 'clientUserMessageId': m.get('source', {}).get('rpcId'), 'text': text_blocks(m.get('content')), 'target': target, 'attachments': self.attachments(m.get('content'))} for target, values in inbox.items() for m in values]
+        queued = [{'id': m['id'], 'clientUserMessageId': m.get('source', {}).get('rpcId'), 'text': text_blocks(m.get('content')), 'target': target, 'attachments': self.attachments(m.get('content')), 'canEdit': queue_text_editable(m), **({} if queue_text_editable(m) else {'editReason': QUEUE_ATTACHMENT_EDIT_REASON})} for target, values in inbox.items() for m in values]
         events = sorted(self.events.values(), key=lambda e: e['seq'])
         last = next((e for e in reversed(events) if e['type'] == 'turn/end'), None)
         started = next((e for e in reversed(events) if e['type'] == 'turn/start'), None)
@@ -678,6 +683,16 @@ class HarnessAgent:
             kind = {'queue_edit': 'edit', 'queue_delete': 'remove', 'queue_send_now': 'steer'}[action]
             change = {'kind': kind}
             if kind == 'edit':
+                projection = self.rpc('session/projections', {'sessionId': sid})
+                values = projection.get('values', {}) if isinstance(projection, dict) else {}
+                inbox = values.get('inbox', {}) if isinstance(values, dict) else {}
+                original = next((message for group in inbox.values() if isinstance(group, list) for message in group if isinstance(message, dict) and str(message.get('id', '')) == str(p.get('messageId', ''))), None) if isinstance(inbox, dict) else None
+                if original is None:
+                    raise ValueError('这条队列消息已发送或已被删除')
+                if not queue_text_editable(original):
+                    raise ValueError(QUEUE_ATTACHMENT_EDIT_REASON)
+                if not str(p.get('text', '')).strip():
+                    raise ValueError('队列消息不能同时没有文字和附件')
                 change['content'] = [{'type': 'text', 'text': p['text']}]
             result = self.rpc('session/updateQueue', {'sessionId': sid, 'itemId': p['messageId'], 'action': change})
         elif action == 'load_older':

@@ -813,7 +813,7 @@ function renderQueuedMessages(messages, running, operable) {
   const collapsed = queueCollapseOverrides.has(queueKey) ?
     queueCollapseOverrides.get(queueKey) : values.length > 1;
   const signature = JSON.stringify([busy, operable, running, canResume, values.map(value =>
-    [value.id, value.text, value.pausedReason || '', value.submission?.status, (value.attachments || []).map(item =>
+    [value.id, value.text, value.pausedReason || '', value.canEdit, value.editReason, value.submission?.status, (value.attachments || []).map(item =>
       [item.name, item.size ?? null])]), collapsed, editingQueuedMessageId]);
   if (signature === queueRenderSignature &&
       (!editingQueuedMessageId || values.some(value => value.id === editingQueuedMessageId))) return;
@@ -899,6 +899,7 @@ function renderQueuedMessages(messages, running, operable) {
       const save = document.createElement('button');
       save.type = 'button';
       save.textContent = '保存';
+      save.disabled = busy || !operable || message.canEdit === false;
       save.onclick = () => {
         const text = editor.value.trim();
         if (!text && !(message.attachments || []).length) {
@@ -917,24 +918,30 @@ function renderQueuedMessages(messages, running, operable) {
       text.textContent = message.text || (message.attachments || []).length ?
         (message.text || '仅附件') : '空消息';
       content.append(text);
-      if ((message.attachments || []).length) {
-        const files = document.createElement('div');
-        files.className = 'queue-attachments';
-        for (const attachment of message.attachments) {
-          const file = document.createElement('span');
-          file.textContent = `${attachment.kind === 'image' ? '图片' : '文件'} · ${attachment.name}`;
-          file.title = attachment.size == null ? attachment.name :
-            `${attachment.name} · ${formatBytes(attachment.size)}`;
-          files.append(file);
-        }
-        content.append(files);
-      }
       if (message.pausedReason && message.pausedReason !== 'Interrupted before the steer was accepted.') {
         const paused = document.createElement('div');
         paused.className = 'queue-paused';
         paused.textContent = `已暂停：${message.pausedReason}`;
         content.append(paused);
       }
+    }
+    if ((message.attachments || []).length) {
+      const files = document.createElement('div');
+      files.className = 'queue-attachments';
+      for (const attachment of message.attachments) {
+        const file = document.createElement('span');
+        file.textContent = `${attachment.kind === 'image' ? '图片' : '文件'} · ${attachment.name}`;
+        file.title = attachment.size == null ? attachment.name :
+          `${attachment.name} · ${formatBytes(attachment.size)}`;
+        files.append(file);
+      }
+      content.append(files);
+    }
+    if (message.canEdit === false && message.editReason) {
+      const reason = document.createElement('div');
+      reason.className = 'queue-paused';
+      reason.textContent = message.editReason;
+      content.append(reason);
     }
     const actions = document.createElement('div');
     actions.className = 'queue-actions';
@@ -980,7 +987,7 @@ function renderQueuedMessages(messages, running, operable) {
       remove.disabled = busy || !operable;
       remove.onclick = () => runQueueAction('queue_delete',
         {messageId: message.id}, '✓ 队列消息已删除');
-      edit.hidden = !supportsAction(currentHost(), 'queue_edit');
+      edit.hidden = !supportsAction(currentHost(), 'queue_edit') || message.canEdit === false;
       steer.hidden = !supportsAction(currentHost(), 'queue_send_now');
       remove.hidden = !supportsAction(currentHost(), 'queue_delete');
       actions.append(edit, steer, remove);

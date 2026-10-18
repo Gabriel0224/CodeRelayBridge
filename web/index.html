@@ -141,7 +141,10 @@
         <div class="composer-settings-bar">
           <div id="queueControls" class="queue-controls" hidden></div>
           <div class="composer-model-settings">
-          <button id="modelSettingsToggle" class="model-settings-toggle" type="button" aria-expanded="false" aria-controls="modelControls" hidden><span id="modelSettingsSummary">当前模型 · 推理档位</span><span class="settings-chevron" aria-hidden="true">⌄</span></button>
+          <div class="composer-model-selector">
+            <button id="jumpBottom" type="button" aria-label="跳至最新" title="跳至最新" hidden aria-hidden="true">↓</button>
+            <button id="modelSettingsToggle" class="model-settings-toggle" type="button" aria-expanded="false" aria-controls="modelControls" hidden><span id="modelSettingsSummary">当前模型 · 推理档位</span><span class="settings-chevron" aria-hidden="true">⌄</span></button>
+          </div>
           <label id="quickSpeedControl" class="permission-switch" for="quickSpeed" title="加速模式会增加额度消耗；实际可用性由原 App 决定。" hidden>
             <input id="quickSpeed" type="checkbox" role="switch" aria-describedby="speedUsageNote"><span id="quickSpeedLabel">闪电加速</span>
           </label>
@@ -150,7 +153,6 @@
             <input id="fullAccess" type="checkbox"><span>完全访问</span>
           </label>
           </div>
-          <button id="jumpBottom" type="button" aria-label="跳至最新" title="跳至最新" hidden aria-hidden="true">↓</button>
         </div>
         <div id="modelControls" class="model-controls" hidden>
           <label for="modelSelect">模型</label><select id="modelSelect"></select>

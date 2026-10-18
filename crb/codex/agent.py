@@ -1359,6 +1359,8 @@ class HostAgent:
         self.last_sent = {}
         self.live_view_caches = {}
         self.pending_native_deliveries = {}
+        self.queue_receipt_dirty = set()
+        self.queue_receipt_attempts = {}
         self.receipt_wakeup = threading.Event()
         self.relay_generation = None
         self.last_error = ''
@@ -1526,7 +1528,9 @@ class HostAgent:
                 continue
             path = value.get('localPath') or value.get('src')
             if path:
-                attachments.append({'path': str(path), 'name': str(value.get('filename') or Path(str(path)).name or '图片'), 'mime': str(value.get('mime') or mimetypes.guess_type(str(path))[0] or 'application/octet-stream'), 'kind': 'image'})
+                inline = str(path).startswith('data:image/')
+                name = value.get('filename') or ('图片' if inline else Path(str(path)).name) or '图片'
+                attachments.append({'path': str(path), 'name': str(name), 'mime': str(value.get('mime') or (str(path)[5:].split(';', 1)[0] if inline else None) or mimetypes.guess_type(str(path))[0] or 'application/octet-stream'), 'kind': 'image'})
         for key in ('fileAttachments', 'addedFiles'):
             for value in context.get(key, []) or []:
                 if not isinstance(value, dict):
@@ -1555,10 +1559,12 @@ class HostAgent:
                 continue
             attachments = []
             for value in self.queue_message_paths(message):
-                try:
-                    size = Path(normalize_local_path(value['path'])).stat().st_size
-                except OSError:
-                    size = None
+                size = None
+                if not value['path'].startswith('data:'):
+                    try:
+                        size = Path(normalize_local_path(value['path'])).stat().st_size
+                    except OSError:
+                        pass
                 item = {'name': title_text(value['name'], '附件'), 'mime': value['mime'], 'kind': value['kind']}
                 if size is not None:
                     item['size'] = size
@@ -1582,6 +1588,8 @@ class HostAgent:
             else:
                 self.queued_followups.pop(tid, None)
             self.dirty.add(tid)
+            self.queue_receipt_dirty.add(tid)
+        self.receipt_wakeup.set()
         return (response, target)
 
     @contextmanager
@@ -1988,21 +1996,65 @@ class HostAgent:
                 inputs.append({'type': 'localImage', 'path': str(path), 'detail': 'auto'})
             else:
                 inputs.append({'type': 'mention', 'name': record.get('name') or path.name, 'path': str(path)})
-            native_attachments.append({'label': record.get('name') or path.name, 'path': str(path), 'fsPath': str(path)})
+            native = {'label': record.get('name') or path.name, 'path': str(path), 'fsPath': str(path)}
+            if mime.startswith('image/'):
+                native['isImageAttachment'] = True
+            native_attachments.append(native)
         return (inputs, native_attachments)
 
     @staticmethod
-    def make_queued_message(tid, message_id, text, state, uploaded_inputs, native_attachments):
+    def native_image_attachment(path, name, image_id=None):
+        """Keep Desktop's editable preview separate from its engine-local path."""
+        path = Path(path)
+        with path.open('rb') as stream:
+            data = stream.read(MAX_ASSET_SIZE + 1)
+        if len(data) > MAX_ASSET_SIZE:
+            raise ValueError('图片超过网页传输上限')
+        mime = mimetypes.guess_type(name)[0] or mimetypes.guess_type(path.name)[0]
+        if not mime or not mime.startswith('image/'):
+            mime = next((kind for signature, kind in ((b'\x89PNG\r\n\x1a\n', 'image/png'), (b'\xff\xd8\xff', 'image/jpeg'), (b'GIF87a', 'image/gif'), (b'GIF89a', 'image/gif'), (b'BM', 'image/bmp')) if data.startswith(signature)), None)
+            if data[:4] == b'RIFF' and data[8:12] == b'WEBP':
+                mime = 'image/webp'
+        if not mime or not mime.startswith('image/'):
+            raise ValueError('无法识别图片格式，请重新选择图片')
+        source = f"data:{mime};base64,{base64.b64encode(data).decode('ascii')}"
+        return {'id': image_id or 'crb-image-' + hashlib.sha256(str(path).encode()).hexdigest(), 'src': source, 'previewSrc': source, 'localPath': str(path), 'filename': name, 'uploadStatus': 'idle'}
+
+    def prepare_queued_images(self, message):
+        """Repair only Relay-owned legacy previews, never rewrite native images."""
+        message = copy.deepcopy(message)
+        context = message.get('context')
+        if not isinstance(context, dict):
+            return message
+        for image in context.get('imageAttachments', []) or []:
+            if not isinstance(image, dict):
+                continue
+            source = str(image.get('src') or '')
+            raw_path = image.get('localPath') or source
+            if not _local_reference(raw_path):
+                continue
+            path = Path(normalize_local_path(raw_path)).expanduser()
+            if not path_belongs_to(path, self.upload_dir) or (image.get('id') and source.startswith('data:image/') and image.get('previewSrc')):
+                continue
+            if not path.is_file():
+                raise ValueError('队列图片已经失效，请重新选择图片')
+            image.update(self.native_image_attachment(path, str(image.get('filename') or path.name), image.get('id')))
+        return message
+
+    @staticmethod
+    def make_queued_message(tid, message_id, text, state, uploaded_inputs, native_attachments, *, turn_trigger='composer_queue'):
         image_attachments, file_attachments = ([], [])
         for value, native in zip(uploaded_inputs, native_attachments):
             path = str(native.get('fsPath') or native.get('path') or '')
             name = str(native.get('label') or Path(path).name or '附件')
             if value.get('type') == 'localImage':
-                image_attachments.append({'src': path, 'localPath': path, 'filename': name})
+                image_attachments.append(HostAgent.native_image_attachment(path, name))
             else:
                 file_attachments.append({'label': name, 'path': path, 'fsPath': path})
         cwd = str(state.get('cwd') or '')
-        context = {'prompt': text, 'workspaceRoots': [cwd] if cwd else [], 'turnTrigger': 'composer_queue', 'imageAttachments': image_attachments, 'fileAttachments': file_attachments, 'pastedTextAttachments': [], 'uploadedFileAttachments': [], 'addedFiles': [], 'selectedTextAttachments': [], 'commentAttachments': [], 'mcpAppModelContextAttachments': [], 'appshotContexts': []}
+        context = {'prompt': text, 'workspaceRoots': [cwd] if cwd else [], 'ideContext': None, 'imageAttachments': image_attachments, 'fileAttachments': file_attachments, 'pastedTextAttachments': [], 'uploadedFileAttachments': [], 'addedFiles': [], 'selectedTextAttachments': [], 'commentAttachments': [], 'mcpAppModelContextAttachments': [], 'appshotContexts': []}
+        if turn_trigger:
+            context['turnTrigger'] = turn_trigger
         collaboration_mode = state.get('latestCollaborationMode')
         if isinstance(collaboration_mode, dict):
             context['collaborationMode'] = copy.deepcopy(collaboration_mode)
@@ -2014,6 +2066,9 @@ class HostAgent:
         inputs = [{'type': 'text', 'text': text, 'text_elements': []}] if text else []
         native_attachments = []
         for attachment in cls.queue_message_paths(message):
+            if attachment['kind'] == 'image' and attachment['path'].startswith('data:image/'):
+                inputs.append({'type': 'image', 'url': attachment['path']})
+                continue
             path = Path(normalize_local_path(attachment['path'])).expanduser()
             try:
                 path = path.resolve()
@@ -2025,7 +2080,10 @@ class HostAgent:
                 inputs.append({'type': 'localImage', 'path': str(path), 'detail': 'auto'})
             else:
                 inputs.append({'type': 'mention', 'name': attachment['name'], 'path': str(path)})
-            native_attachments.append({'label': attachment['name'], 'path': str(path), 'fsPath': str(path)})
+            native = {'label': attachment['name'], 'path': str(path), 'fsPath': str(path)}
+            if attachment['kind'] == 'image':
+                native['isImageAttachment'] = True
+            native_attachments.append(native)
         if not inputs:
             raise ValueError('队列消息没有可发送的文字或附件')
         return (text, inputs, native_attachments)
@@ -2089,6 +2147,8 @@ class HostAgent:
                     else:
                         self.queued_followups.pop(tid, None)
                     self.dirty.add(tid)
+                    self.queue_receipt_dirty.add(tid)
+                    self.receipt_wakeup.set()
                 return
             if method == 'thread-read-state-changed' and msg.get('version') == 3:
                 tid = p.get('conversationId')
@@ -2137,6 +2197,8 @@ class HostAgent:
             self.question_ui.notify_native_change(tid)
             self.observe_capacity_retry(tid)
         if ui_changed and getattr(self, 'receipt_wakeup', None):
+            with self.lock:
+                self.queue_receipt_dirty.add(tid)
             self.receipt_wakeup.set()
 
     def read_catalog(self):
@@ -3481,7 +3543,10 @@ class HostAgent:
             index = next((i for i, message in enumerate(queued) if str(message.get('id', '')) == message_id), -1)
             if action != 'queue_reorder' and index < 0:
                 raise ValueError('这条队列消息已发送或已被删除')
+            if action in ('queue_edit', 'queue_send_now') and (native_message_receipt(state, message_id) or native_message_receipt(state, message_id, steering=True)):
+                raise ValueError('这条队列消息已发送或已被删除')
             if action == 'queue_edit':
+                queued[index] = self.prepare_queued_images(queued[index])
                 edited_text = str(payload.get('text', '')).strip()
                 if len(edited_text) > 32000:
                     raise ValueError('消息长度不能超过 32000 字符')
@@ -3510,17 +3575,18 @@ class HostAgent:
                 queued = [by_id[value] for value in message_ids]
                 self.update_native_queue(tid, queued, target)
                 return {'ok': True, 'transport': 'desktop-native-queue', 'reordered': True, 'confirmedAt': time.time()}
-            message = queued.pop(index)
+            message = self.prepare_queued_images(queued[index])
+            queued_text, inputs, native_attachments = self.queued_message_inputs(message)
+            queued.pop(index)
             self.update_native_queue(tid, queued, target)
             try:
-                queued_text, inputs, native_attachments = self.queued_message_inputs(message)
                 active = state.get('threadRuntimeStatus', {}).get('type') == 'active'
                 if active:
                     params = {'conversationId': tid, 'input': inputs, 'clientUserMessageId': message_id, 'attachments': native_attachments, 'restoreMessage': message}
                     response = self.deliver_native_message(tid, command['id'], target, 'thread-follower-steer-turn', params, steering=True, receipt_id=message_id, receipt_context={'queueReceipt': {'messageId': message_id, 'sentNow': True, 'behavior': 'steer'}})
                     behavior = 'steer'
                 else:
-                    params = {'conversationId': tid, 'turnStart': {'request': {'threadId': tid, 'input': inputs, 'clientUserMessageId': message_id}, 'context': {'inheritThreadSettings': True, 'attachments': native_attachments, 'localTurnMetadata': {'fileAttachmentCount': len(native_attachments)}}}}
+                    params = {'conversationId': tid, 'turnStart': {'request': {'threadId': tid, 'input': inputs, 'clientUserMessageId': message_id}, 'context': {'inheritThreadSettings': True, 'restoreMessage': message, 'attachments': native_attachments, 'localTurnMetadata': {'fileAttachmentCount': sum((not item.get('isImageAttachment') for item in native_attachments))}}}}
                     response = self.deliver_native_message(tid, command['id'], target, 'thread-follower-start-turn', params, version=2, receipt_id=message_id, receipt_context={'queueReceipt': {'messageId': message_id, 'sentNow': True, 'behavior': 'start'}})
                     behavior = 'start'
             except (TimeoutError, ConnectionError):
@@ -3540,6 +3606,9 @@ class HostAgent:
         if not text and (not uploaded_inputs):
             raise ValueError('请输入消息或添加附件')
         inputs = ([{'type': 'text', 'text': text, 'text_elements': []}] if text else []) + uploaded_inputs
+        restore_message = None
+        if uploaded_inputs and (not (action == 'send' and state.get('threadRuntimeStatus', {}).get('type') == 'active')):
+            restore_message = self.make_queued_message(tid, command['id'], text, state, uploaded_inputs, native_attachments, turn_trigger=None)
         if action == 'send':
             if state.get('threadRuntimeStatus', {}).get('type') == 'active':
                 message = self.make_queued_message(tid, command['id'], text, state, uploaded_inputs, native_attachments)
@@ -3548,13 +3617,13 @@ class HostAgent:
                 queued.append(message)
                 self.update_native_queue(tid, queued, target)
                 return {'ok': True, 'transport': 'desktop-native-queue', 'queued': True, 'messageId': command['id'], 'position': len(queued), 'confirmedAt': time.time()}
-            params = {'conversationId': tid, 'turnStart': {'request': {'threadId': tid, 'input': inputs, 'clientUserMessageId': command['id']}, 'context': {'inheritThreadSettings': True, 'attachments': native_attachments, 'localTurnMetadata': {'fileAttachmentCount': len(native_attachments)}}}}
+            params = {'conversationId': tid, 'turnStart': {'request': {'threadId': tid, 'input': inputs, 'clientUserMessageId': command['id']}, 'context': {'inheritThreadSettings': True, **({'restoreMessage': restore_message} if restore_message else {}), 'attachments': native_attachments, 'localTurnMetadata': {'fileAttachmentCount': sum((not item.get('isImageAttachment') for item in native_attachments))}}}}
             response = self.deliver_native_message(tid, command['id'], target, 'thread-follower-start-turn', params, version=2, receipt_context={'questionAck': question_ack} if question_ack else None)
         elif action == 'steer':
             if state.get('threadRuntimeStatus', {}).get('type') != 'active':
                 raise RuntimeError('当前没有正在运行的轮次，请使用“发送”')
             restore_text = text or '附件：' + '、'.join((item.get('name', '附件') for item in message_attachments))
-            params = {'conversationId': tid, 'input': inputs, 'clientUserMessageId': command['id'], 'attachments': native_attachments, 'restoreMessage': {'text': restore_text, 'cwd': state.get('cwd'), 'context': {'workspaceRoots': [state.get('cwd')] if state.get('cwd') else []}}}
+            params = {'conversationId': tid, 'input': inputs, 'clientUserMessageId': command['id'], 'attachments': native_attachments, 'restoreMessage': restore_message or {'text': restore_text, 'cwd': state.get('cwd'), 'context': {'workspaceRoots': [state.get('cwd')] if state.get('cwd') else []}}}
             response = self.deliver_native_message(tid, command['id'], target, 'thread-follower-steer-turn', params, steering=True, receipt_context={'questionAck': question_ack} if question_ack else None)
         else:
             raise ValueError('不支持的操作')
@@ -3637,12 +3706,90 @@ class HostAgent:
                     self.pending_native_deliveries.pop(cid, None)
                     self.results[cid] = result
 
+    def reconcile_native_queue_receipts(self):
+        """Retire only this Relay's queued IDs proven accepted by their owner.
+
+        Desktop's automatic queue removes a captured message by deep equality.
+        A concurrent full-state edit can therefore leave its already accepted ID
+        in the queue. Use Desktop's per-ID removal, not another queue snapshot,
+        another send, a text match, or a direct edit of its durable state file.
+        """
+        with self.lock:
+            dirty = self.queue_receipt_dirty
+            self.queue_receipt_dirty = set()
+            snapshots = []
+            for tid in dirty:
+                slot = self.states.get(tid) or {}
+                owner = slot.get('owner')
+                if not owner:
+                    continue
+                mids = [message.get('id') for message in self.queued_followups.get(tid, [])]
+                if mids:
+                    snapshots.append((tid, owner, slot.get('state') or {}, mids))
+        captured = []
+        for tid, owner, state, mids in snapshots:
+            for mid in mids:
+                if not isinstance(mid, str) or not mid:
+                    continue
+                receipt = native_message_receipt(state, mid) or native_message_receipt(state, mid, steering=True)
+                if receipt and receipt.get('itemId') and receipt.get('turnId'):
+                    captured.append((tid, mid, owner))
+        processed = 0
+        for tid, mid, owner in captured:
+            key = (tid, mid, owner)
+            attempts, previous = self.queue_receipt_attempts.get(key, (0, 0))
+            if attempts >= 5:
+                continue
+            if processed >= 2 or (attempts and time.monotonic() - previous < 5):
+                with self.lock:
+                    self.queue_receipt_dirty.add(tid)
+                continue
+            with self.connect_journal() as db:
+                row = db.execute('SELECT result FROM commands WHERE id=?', (mid,)).fetchone()
+            result = json.loads(row[0]) if row and row[0] else None
+            if not isinstance(result, dict) or result.get('ok') is not True or result.get('queued') is not True or (result.get('messageId') != mid):
+                continue
+            with self.lock:
+                current = self.states.get(tid) or {}
+                if current.get('owner') != owner or not any((m.get('id') == mid for m in self.queued_followups.get(tid, []))):
+                    continue
+                if not (native_message_receipt(current.get('state') or {}, mid) or native_message_receipt(current.get('state') or {}, mid, steering=True)):
+                    continue
+            if not self.ipc or not self.ipc.connected:
+                continue
+            processed += 1
+            self.queue_receipt_attempts[key] = (attempts + 1, time.monotonic())
+            try:
+                response = self.ipc.request('thread-follower-remove-queued-message', {'conversationId': tid, 'messageId': mid}, target=owner, timeout=5)
+                native = response.get('result')
+                if not isinstance(native, dict) or 'removed' not in native or native.get('ok') is False:
+                    raise ValueError('Native queue removal was not confirmed')
+                removed = native['removed']
+                if removed is not None and (not isinstance(removed, dict) or not isinstance(removed.get('message'), dict) or removed['message'].get('id') != mid):
+                    raise ValueError('Native queue removal identity changed')
+            except (TimeoutError, ConnectionError, OSError, RuntimeError, ValueError, TypeError):
+                with self.lock:
+                    self.queue_receipt_dirty.add(tid)
+                continue
+            with self.lock:
+                if (self.states.get(tid) or {}).get('owner') != owner:
+                    continue
+                messages = self.queued_followups.get(tid, [])
+                remaining = [message for message in messages if message.get('id') != mid]
+                if remaining:
+                    self.queued_followups[tid] = remaining
+                else:
+                    self.queued_followups.pop(tid, None)
+                self.dirty.add(tid)
+                self.queue_receipt_attempts.pop(key, None)
+
     def native_receipt_loop(self):
         while True:
             self.receipt_wakeup.wait(1)
             self.receipt_wakeup.clear()
             try:
                 self.reconcile_native_deliveries()
+                self.reconcile_native_queue_receipts()
             except (OSError, sqlite3.Error, ValueError, KeyError):
                 pass
 

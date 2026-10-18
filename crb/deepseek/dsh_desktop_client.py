@@ -151,7 +151,18 @@ class DesktopHarnessClient(HarnessClient):
             default = next((s['value'] for s in descriptions['namespaces'] if s['ns'] == 'agent-default-model'), {})
             return {**value, 'default': {k: default[k] for k in ('provider', 'model', 'reasoningEffort') if k in default}}
         if endpoint == 'session/projections':
-            return self.history(request['sessionId']).get('projections', {'values': {}, 'asOfSeq': -1})
+            value = copy.deepcopy(self.history(request['sessionId']).get('projections', {'values': {}, 'asOfSeq': -1}))
+            values = value.setdefault('values', {})
+            if self.ready['host'].is_set():
+                with self.hub_lock:
+                    frame = copy.deepcopy(self.inboxes.get(request['sessionId']))
+                inbox = {'queued': [], 'steering': [], 'context': []}
+                for occurrence in (frame or {}).get('payload', {}).get('items', []):
+                    inbox[occurrence['placement']].append(occurrence['message'])
+                values['inbox'] = inbox
+            else:
+                values.pop('inbox', None)
+            return value
         if endpoint == 'session/page':
             page = self.history(request['address']['sessionId'], request.get('beforeSeq'))
             return {'records': [{'type': 'event', 'event': r['event']} for r in page['events']], 'hasMore': page['hasMore']}
