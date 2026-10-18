@@ -101,6 +101,7 @@ let editingQueuedMessageId = '';
 let initialSelectionDone = false;
 let modelDirty = false;
 let permissionDirty = false;
+let pendingSpeedChange = null;
 let pendingFiles = [];
 let newThreadFiles = [];
 const drafts = new Map();
@@ -622,6 +623,7 @@ function applyLayout() {
     if (session.term) session.term.options.fontSize = layoutState.fontSize;
   }
   fitActiveTerminal();
+  positionFontMenu();
 }
 
 function resetLayout() {
@@ -1349,7 +1351,6 @@ function setModelSettingsOpen(open) {
   const expanded = Boolean(open && !$('modelSettingsToggle').hidden);
   document.body.classList.toggle('composer-settings-open', expanded);
   $('modelSettingsToggle').setAttribute('aria-expanded', String(expanded));
-  $('quickSpeed').setAttribute('aria-expanded', String(expanded));
   $('modelControls').hidden = !expanded;
 }
 
@@ -3218,7 +3219,7 @@ function clearThread() {
   $('queuedMessages').hidden = true;
   $('attachThread').hidden = true;
   $('modelSettingsToggle').hidden = true;
-  $('quickSpeed').hidden = true;
+  $('quickSpeedControl').hidden = true;
   $('fullAccess').closest('label').hidden = true;
   $('fullAccess').disabled = true;
   setModelSettingsOpen(false);
@@ -5005,24 +5006,40 @@ function populateEfforts(modelId, desired) {
   setOptions($('effortSelect'), items, value);
 }
 
-function populateServiceTiers(modelId, desired = 'default') {
+function modelServiceTiers(modelId) {
   const host = currentHost();
-  const model = host?.models.find(item => item.id === modelId);
-  const codex = applicationId(host) === 'codex';
-  const tiers = codex && Array.isArray(model?.serviceTiers) ? model.serviceTiers : [];
-  const available = tiers.some(tier => tier.id !== 'default');
-  for (const id of ['speedSelect', 'speedLabel', 'speedUsageNote']) $(id).hidden = !codex;
-  $('speedUsageNote').textContent = !tiers.length ?
+  const model = host?.models?.find(item => item.id === modelId);
+  return applicationId(host) === 'codex' && Array.isArray(model?.serviceTiers) ? model.serviceTiers : [];
+}
+
+function serviceTierForModel(modelId, desired = 'default') {
+  const tiers = modelServiceTiers(modelId);
+  if (tiers.some(tier => tier.id === desired)) return desired;
+  if (['priority', 'fast'].includes(desired)) {
+    const equivalent = tiers.find(tier => ['priority', 'fast'].includes(tier.id));
+    if (equivalent) return equivalent.id;
+  }
+  return tiers.some(tier => tier.id === 'default') ? 'default' : '';
+}
+
+function syncSpeedControl(host, meta, activeModel) {
+  const tiers = modelServiceTiers(activeModel);
+  const fastTier = ['priority', 'fast', 'ultrafast'].find(id => tiers.some(tier => tier.id === id));
+  const available = Boolean(fastTier && tiers.some(tier => tier.id === 'default'));
+  const pending = pendingSpeedChange?.host === host.id && pendingSpeedChange.thread === meta.id;
+  $('quickSpeedControl').hidden = applicationId(host) !== 'codex' || !activeModel;
+  $('quickSpeed').checked = pending ? pendingSpeedChange.enabled :
+    ['priority', 'fast', 'ultrafast'].includes(current?.serviceTier || meta.serviceTier);
+  $('quickSpeed').disabled = !available || busy || threadPreviewOnly || !host.online ||
+    !current?.online || !host.desktopConnected || meta.archived || !current?.owned ||
+    current?.source !== 'desktop-live' || !supportsAction(host, 'update_settings') ||
+    !host.models.find(model => model.id === activeModel)?.efforts?.some(effort =>
+      effort.id === (current?.reasoningEffort || meta.reasoningEffort));
+  const note = !tiers.length ?
     '目标客户端未提供速度选项；请更新目标电脑的 CRB 客户端后重试。' : available ?
       '加速模式会增加额度消耗；实际可用性由原 App 决定。' : '此模型未提供加速模式。';
-  const label = tier => tier.id === 'default' ? '标准' :
-    ['priority', 'fast'].includes(tier.id) ? '⚡ 加速' :
-      tier.id === 'ultrafast' ? '⚡ 极速' : tier.name || tier.id;
-  const matching = tiers.some(tier => tier.id === desired) ? desired :
-    ['priority', 'fast'].includes(desired) ? tiers.find(tier => ['priority', 'fast'].includes(tier.id))?.id : '';
-  setOptions($('speedSelect'), tiers.length ? tiers.map(tier => ({value: tier.id, label: label(tier), title: tier.description})) :
-    [{value: '', label: '未提供速度选项'}], matching || (tiers.length ? 'default' : ''));
-  $('speedSelect').disabled = !available || busy || threadPreviewOnly || !host?.online || Boolean(selectedThread()?.archived);
+  $('quickSpeedControl').title = note;
+  $('speedUsageNote').textContent = note;
 }
 
 function populateNewThreadEfforts(desired) {
@@ -5159,7 +5176,8 @@ function syncThreadControls() {
   syncManualThreadRefreshButton();
   if (!meta || !host) {
     $('modelSettingsToggle').hidden = true;
-    $('quickSpeed').hidden = true;
+    $('quickSpeedControl').hidden = true;
+    $('quickSpeed').disabled = true;
     setModelSettingsOpen(false);
     $('fullAccess').closest('label').hidden = true;
     $('fullAccess').disabled = true;
@@ -5172,8 +5190,7 @@ function syncThreadControls() {
     models.push({id: activeModel, label: activeModel, efforts: []});
   }
   $('modelSettingsToggle').hidden = !models.length;
-  $('quickSpeed').hidden = applicationId(host) !== 'codex' || !models.length;
-  $('quickSpeed').disabled = busy || threadPreviewOnly || !host.online || Boolean(meta.archived);
+  syncSpeedControl(host, meta, activeModel);
   if (!models.length) setModelSettingsOpen(false);
   if (models.length) {
     const modelLabel = models.find(model => model.id === activeModel)?.label || activeModel || '未设置模型';
@@ -5182,12 +5199,7 @@ function syncThreadControls() {
     if (modelLabel !== '未设置模型') modelName.dataset.i18nIgnore = 'true';
     modelName.textContent = modelLabel;
     const effortNameLabel = document.createElement('span'); effortNameLabel.textContent = effortLabel;
-    const tier = applicationId(host) === 'codex' ? (current?.serviceTier || 'default') : 'default';
-    const speedBadge = document.createElement('span');
-    speedBadge.textContent = tier === 'ultrafast' ? ' · ⚡ 极速' : ['priority', 'fast'].includes(tier) ? ' · ⚡ 加速' : '';
-    $('quickSpeedLabel').textContent = speedBadge.textContent ? '加速已开' : '闪电加速';
-    $('quickSpeed').classList.toggle('active', Boolean(speedBadge.textContent));
-    $('modelSettingsSummary').replaceChildren(modelName, document.createTextNode(' · '), effortNameLabel, speedBadge);
+    $('modelSettingsSummary').replaceChildren(modelName, document.createTextNode(' · '), effortNameLabel);
     $('modelSettingsToggle').title = '展开模型与推理设置';
     $('modelControls').hidden = !document.body.classList.contains('composer-settings-open');
     const desired = modelDirty ? $('modelSelect').value : activeModel;
@@ -5196,9 +5208,6 @@ function syncThreadControls() {
     })), desired);
     if (!modelDirty) populateEfforts($('modelSelect').value,
       current?.reasoningEffort || meta.reasoningEffort);
-    if (!modelDirty) populateServiceTiers($('modelSelect').value, current?.serviceTier || 'default');
-    $('speedSelect').disabled = busy || threadPreviewOnly || !host.online || meta.archived ||
-      !host.models.find(model => model.id === $('modelSelect').value)?.serviceTiers?.some(tier => tier.id !== 'default');
     $('modelSelect').disabled = busy || threadPreviewOnly || !host.online || meta.archived;
     $('effortSelect').disabled = busy || threadPreviewOnly || !host.online || meta.archived;
     $('applySettings').disabled = busy || threadPreviewOnly || !host.online || meta.archived ||
@@ -7489,6 +7498,50 @@ document.addEventListener('keydown', event => {
     }
   }
 });
+function positionFontMenu() {
+  const menu = $('fontMenu'), toggle = $('fontToggle');
+  if (!menu || menu.hidden || !toggle) return;
+  const anchor = toggle.getBoundingClientRect();
+  const width = menu.offsetWidth, height = menu.offsetHeight;
+  const viewport = window.visualViewport;
+  const left = viewport?.offsetLeft || 0, top = viewport?.offsetTop || 0;
+  const right = left + (viewport?.width || innerWidth);
+  const bottom = top + (viewport?.height || innerHeight);
+  menu.style.left = `${Math.max(left + 10, Math.min(anchor.right - width, right - width - 10))}px`;
+  menu.style.top = `${Math.max(top + 10, Math.min(anchor.bottom + 8, bottom - height - 10))}px`;
+}
+function closeFontMenu(restoreFocus = false) {
+  $('fontMenu').hidden = true;
+  $('fontToggle').setAttribute('aria-expanded', 'false');
+  if (restoreFocus) $('fontToggle').focus();
+}
+function openFontMenu() {
+  for (const {close} of sidebarMenus) close();
+  $('fontMenu').hidden = false;
+  $('fontToggle').setAttribute('aria-expanded', 'true');
+  positionFontMenu();
+  $('fontSize').focus({preventScroll: true});
+}
+$('fontToggle').onclick = () => $('fontMenu').hidden ? openFontMenu() : closeFontMenu(true);
+$('fontToggle').onkeydown = event => {
+  if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+    event.preventDefault(); openFontMenu();
+  }
+};
+document.addEventListener('pointerdown', event => {
+  if (!$('fontMenu').hidden && !$('fontMenu').contains(event.target) && !$('fontToggle').contains(event.target)) closeFontMenu();
+});
+document.addEventListener('focusin', event => {
+  if (!$('fontMenu').hidden && !$('fontMenu').contains(event.target) && !$('fontToggle').contains(event.target)) closeFontMenu();
+});
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && !$('fontMenu').hidden) {
+    event.preventDefault(); closeFontMenu(true);
+  }
+});
+window.addEventListener('resize', positionFontMenu);
+window.visualViewport?.addEventListener('resize', positionFontMenu);
+window.visualViewport?.addEventListener('scroll', positionFontMenu);
 $('fontSize').oninput = () => {
   layoutState.fontSize = Number($('fontSize').value);
   applyLayout();
@@ -7945,11 +7998,6 @@ $('mobileBackdrop').onclick = closeMobilePanels;
 $('sidebarClose').onclick = closeMobilePanels;
 $('modelSettingsToggle').onclick = () => {
   setModelSettingsOpen(!document.body.classList.contains('composer-settings-open'));
-};
-$('quickSpeed').onclick = () => {
-  setModelSettingsOpen(true);
-  if (!$('speedSelect').disabled) $('speedSelect').focus({preventScroll: true});
-  else $('speedUsageNote').scrollIntoView({block: 'nearest'});
 };
 mobileQuery.addEventListener('change', syncMobileLayout);
 installMobileSidebarScrollGuard();
@@ -8713,16 +8761,52 @@ $('threadMarkdownClose').onclick = () => $('threadMarkdownDialog').close();
 $('modelSelect').onchange = () => {
   modelDirty = true;
   populateEfforts($('modelSelect').value, '');
-  populateServiceTiers($('modelSelect').value, $('speedSelect').value);
 };
 $('effortSelect').onchange = () => {modelDirty = true;};
-$('speedSelect').onchange = () => {modelDirty = true;};
 function cancelModelSelection() {
   modelDirty = false;
   syncThreadControls();
   setModelSettingsOpen(false);
 }
 $('cancelSettings').onclick = cancelModelSelection;
+$('quickSpeed').onchange = async () => {
+  const host = currentHost();
+  const meta = selectedThread();
+  if (!host || !meta || busy || $('quickSpeed').disabled) {
+    syncThreadControls();
+    return;
+  }
+  // This switch changes the active conversation, never an unapplied model draft.
+  const model = current?.model || meta.model;
+  const effort = current?.reasoningEffort || meta.reasoningEffort;
+  const enabled = $('quickSpeed').checked;
+  const tier = enabled ? ['priority', 'fast', 'ultrafast'].find(id =>
+    modelServiceTiers(model).some(item => item.id === id)) : 'default';
+  const target = {host: host.id, thread: meta.id};
+  const isTarget = () => selected?.host === target.host && selected?.thread === target.thread;
+  pendingSpeedChange = {...target, enabled};
+  busy = true;
+  $('sendResult').className = '';
+  $('sendResult').textContent = enabled ? '正在开启闪电加速…' : '正在关闭闪电加速…';
+  syncThreadControls();
+  try {
+    await issueCommand('update_settings', {...target, payload: {model, effort, serviceTier: tier}});
+    if (isTarget()) {
+      if (current?.model === model) current.serviceTier = tier;
+      $('sendResult').textContent = enabled ? '✓ 已开启闪电加速' : '✓ 已关闭闪电加速';
+    }
+  } catch (error) {
+    if (isTarget()) {
+      $('sendResult').textContent = error.message;
+      $('sendResult').className = 'error';
+    }
+  } finally {
+    pendingSpeedChange = null;
+    busy = false;
+    syncThreadControls();
+    if (isTarget()) await refreshThread(true);
+  }
+};
 $('fullAccess').onchange = async () => {
   const host = currentHost();
   const meta = selectedThread();
@@ -8763,8 +8847,9 @@ $('applySettings').onclick = async () => {
     await issueCommand('update_settings', {
       host: host.id, thread: meta.id,
       payload: {model: $('modelSelect').value, effort: $('effortSelect').value,
-        ...(applicationId(host) === 'codex' && host.models.find(model => model.id === $('modelSelect').value)?.serviceTiers?.length
-          ? {serviceTier: $('speedSelect').value || 'default'} : {})}
+        ...(modelServiceTiers($('modelSelect').value).length &&
+            serviceTierForModel($('modelSelect').value, current?.serviceTier || 'default')
+          ? {serviceTier: serviceTierForModel($('modelSelect').value, current?.serviceTier || 'default')} : {})}
     });
     modelDirty = false;
     $('sendResult').textContent = `✓ 原 ${APPLICATION_LABELS[applicationId(host)] || applicationId(host)} 对话的模型设置已同步`;

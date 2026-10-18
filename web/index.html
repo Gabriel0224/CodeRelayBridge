@@ -120,10 +120,7 @@
         <div class="workspace-tool-row">
           <button id="trafficToggle" class="secondary" data-icon="↕" aria-label="流量" type="button" title="查看公网面板流量">↕ 流量</button>
           <button id="codexUpdatesToggle" class="secondary" data-icon="↑" type="button" hidden>↑ 软件更新</button>
-          <label class="font-size-control" for="fontSize">
-            <span>A</span><input id="fontSize" type="range" min="5" max="32" step="1" value="13"><output id="fontSizeValue" for="fontSize">13</output>
-          </label>
-          <button id="layoutReset" class="secondary" data-icon="↺" aria-label="重置布局" type="button" title="恢复默认区块尺寸与字号">↺ 重置</button>
+          <button id="fontToggle" class="secondary" data-icon="Aa" aria-label="字体" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="fontMenu" title="调整字体大小"><span aria-hidden="true">Aa</span> <span>字体</span></button>
         </div>
       </div>
     </header>
@@ -143,7 +140,10 @@
       <div class="composer-top">
         <div class="composer-settings-bar">
           <button id="modelSettingsToggle" class="model-settings-toggle" type="button" aria-expanded="false" aria-controls="modelControls" hidden><span id="modelSettingsSummary">当前模型 · 推理档位</span><span class="settings-chevron" aria-hidden="true">⌄</span></button>
-          <button id="quickSpeed" class="secondary quick-speed" type="button" aria-expanded="false" aria-controls="modelControls" title="查看闪电加速设置" hidden><span aria-hidden="true">⚡</span><span id="quickSpeedLabel">闪电加速</span></button>
+          <label id="quickSpeedControl" class="permission-switch" for="quickSpeed" title="加速模式会增加额度消耗；实际可用性由原 App 决定。" hidden>
+            <input id="quickSpeed" type="checkbox" role="switch" aria-describedby="speedUsageNote"><span id="quickSpeedLabel">闪电加速</span>
+          </label>
+          <span id="speedUsageNote" hidden>加速模式会增加额度消耗；实际可用性由原 App 决定。</span>
           <label class="permission-switch" for="fullAccess" title="控制原 Codex 对话后续轮次的文件、命令与网络访问权限" hidden>
             <input id="fullAccess" type="checkbox"><span>完全访问</span>
           </label>
@@ -152,8 +152,6 @@
         <div id="modelControls" class="model-controls" hidden>
           <label for="modelSelect">模型</label><select id="modelSelect"></select>
           <label for="effortSelect">推理</label><select id="effortSelect"></select>
-          <label id="speedLabel" for="speedSelect" hidden>速度</label><select id="speedSelect" hidden aria-describedby="speedUsageNote"></select>
-          <span id="speedUsageNote" class="model-speed-note" hidden>加速模式会增加额度消耗；实际可用性由原 App 决定。</span>
           <div class="settings-actions">
             <button id="cancelSettings" class="secondary" type="button">取消</button>
             <button id="applySettings" class="secondary" type="button">应用</button>
@@ -544,5 +542,11 @@
     </div>
   </form>
 </dialog>
+<div id="fontMenu" class="font-menu" role="dialog" aria-label="字体设置" hidden>
+  <label class="font-size-control" for="fontSize">
+    <span>字号</span><input id="fontSize" type="range" min="5" max="32" step="1" value="13"><output id="fontSizeValue" for="fontSize">13</output>
+  </label>
+  <button id="layoutReset" class="secondary" type="button" aria-label="重置布局" title="恢复默认区块尺寸与字号">↺ 重置</button>
+</div>
 </body>
 </html>
