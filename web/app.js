@@ -4089,13 +4089,42 @@ function groupTurns(items) {
   return groups;
 }
 
+function chronologicalTurnItems(items) {
+  // Desktop can hydrate an opening prompt behind an already accepted steer.
+  // Repair only that display constraint; timestamps may be round-level and
+  // cannot safely sort commands, questions or replies. Never mutate history.
+  const isAnswer = item => Array.isArray(item.questionReplyTo) && item.questionReplyTo.length &&
+    (item.type === 'userMessage' || item.type === 'steeringUserMessage' && item.status === 'accepted');
+  const opening = items.findIndex(item => item.type === 'userMessage' && !item.questionReplyTo?.length);
+  const ordered = opening > 0 && items.slice(0, opening).some(item =>
+    item.type === 'steeringUserMessage' || isAnswer(item)) ?
+    [items[opening], ...items.slice(0, opening), ...items.slice(opening + 1)] : items;
+  const questions = new Map();
+  ordered.forEach((item, index) => {
+    for (const question of item.questions || []) {
+      if (question.questionItemId) questions.set(question.questionItemId, index);
+    }
+  });
+  const deferred = new Map();
+  const chronological = [];
+  ordered.forEach((item, index) => {
+    const anchor = isAnswer(item) ? Math.max(-1, ...item.questionReplyTo.map(id => questions.get(id) ?? -1)) : -1;
+    if (anchor > index) {
+      if (!deferred.has(anchor)) deferred.set(anchor, []);
+      deferred.get(anchor).push(item);
+    } else chronological.push(item);
+    chronological.push(...(deferred.get(index) || []));
+  });
+  return chronological;
+}
+
 function timelineSegments(items) {
   // A mid-turn question/reply is a chronology boundary, not another opening
   // prompt. Keep the original turn ID on items for all native actions.
   const segments = [];
   for (const turn of groupTurns(items)) {
     let segment = null;
-    for (const item of turn.items) {
+    for (const item of chronologicalTurnItems(turn.items)) {
       const user = ['userMessage', 'steeringUserMessage'].includes(item.type);
       if (!segment || user && segment.items.some(value =>
           !['userMessage', 'steeringUserMessage'].includes(value.type))) {
@@ -4188,7 +4217,9 @@ function mergeHistoryItems(older, newer) {
     // Preserve tools missing from a bounded live view, but let live item values
     // win and keep an overlapping partial turn together before the next turn.
     const items = mergeHistorySequence(previous.get(turn.key)?.items || [], turn.items, itemKey);
-    return items;
+    // Normalize before inserting local receipts as well as during rendering;
+    // otherwise an intervening receipt can split the opening and its follow-up.
+    return chronologicalTurnItems(items);
   });
 }
 
