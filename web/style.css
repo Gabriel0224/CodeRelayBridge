@@ -1936,9 +1936,7 @@ html[data-theme="light"] .mobile-layout .sidebar-close { border-color: var(--the
 .mobile-layout .workspace-tool-row { gap: 4px; }
 .mobile-layout .workspace-tool-row > button { width: max(36px, calc(20px * var(--ui-font-scale))); min-width: max(36px, calc(20px * var(--ui-font-scale))); min-height: max(36px, calc(22px * var(--ui-font-scale))); padding: 0; font-size: 0; }
 .mobile-layout .workspace-tool-row > button::before { content: attr(data-icon); font-size: max(5px, calc(15px * var(--ui-font-scale))); line-height: 1; }
-.mobile-layout #extensionsToggle { width: auto; min-width: 56px; min-height: max(36px, calc(22px * var(--ui-font-scale))); padding: 0 5px; font-size: max(5px, calc(10px * var(--ui-font-scale))); white-space: normal; }
-.mobile-layout #extensionsToggle span { min-width: 0; overflow-wrap: anywhere; }
-.mobile-layout #extensionsToggle::before { content: none; }
+.mobile-layout #extensionsToggle > span { display: none; }
 #panelRestartDialog label { display: flex; align-items: flex-start; gap: 8px; margin: 14px 0; }
 #panelRestartDialog input[type="radio"] { flex: none; width: 14px; height: 14px; min-height: 0; padding: 0; margin: 2px 0; }
 #panelRestartStatus { min-height: 22px; overflow-wrap: anywhere; }

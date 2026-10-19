@@ -235,8 +235,8 @@
       "exportSha256": "b3e2d8c42763030deccb2df00f18ca252bec9792098fefcaa4c34300af299a33"
     },
     "desktop_client/__init__.py": {
-      "canonicalSha256": "0fa037799b83d7aa9aadb362394104c9250a6ae23adc743ee07040471e033ec9",
-      "exportSha256": "dd3cd0be98452e8cd1c5911cbebbd071dc86257967989faf111846ce94ddb840"
+      "canonicalSha256": "6e748ef1c4410cf86883558fb748a7c8709233eb8efe2d7de43c492b7819fca3",
+      "exportSha256": "8c7717d9744bbdd12dcdfc947ce8f7c926cb2649baff3950195db24d9e30119d"
     },
     "desktop_client/acceptance.py": {
       "canonicalSha256": "89dee34346aa1d650e9aeeb009c77c972108009e2e3a4678c3e5cf00e1fe320c",
@@ -619,8 +619,8 @@
       "exportSha256": "00de28a5370bd27a8512d9f31da4eceb380c4cdcb2434fac5941e769257094dc"
     },
     "web/style.css": {
-      "canonicalSha256": "7e6dae105306392f8bfe93a16b4f0f27831963e0f5cf5b7f6bb47c2da601aeb1",
-      "exportSha256": "95fe58945b868e2e45dc492040cf98bb3295a0c46a20c4ce9013cfcfd37bad17"
+      "canonicalSha256": "7cf4c784bf1077d99241f33a7eba371f0311a7beaf5c80cddad0eb6d15e660af",
+      "exportSha256": "b2a3021bcab730560be8789d86f9115a82355869ffcd57f9d1a9c224871744ef"
     },
     "web/vendor/katex/LICENSE": {
       "canonicalSha256": "766ccc1f306c885aa45542a9846bbd0a505b27a0374f146778171c2254ce18e3",
