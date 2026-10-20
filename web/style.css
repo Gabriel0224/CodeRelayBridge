@@ -988,11 +988,12 @@ html[data-theme="light"] .message-retry:hover:not(:disabled) { background: var(-
 #modelSettingsSummary { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .settings-chevron { color: var(--muted); font-size: max(5px, calc(14px * var(--ui-font-scale))); transition: transform .15s; }
 .model-settings-toggle[aria-expanded="true"] .settings-chevron { transform: rotate(180deg); }
-.model-controls { display: flex; flex: 1 0 100%; align-items: center; justify-content: flex-start; flex-wrap: wrap; gap: 6px; border-top: 1px solid var(--line); padding-top: 8px; }
+.model-controls { display: flex; flex: 0 1 auto; min-width: 0; max-width: 100%; margin-left: auto; justify-self: end; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 6px; border-top: 1px solid var(--line); padding-top: 8px; }
 .model-controls label { color: #78847d; font-size: max(5px, calc(9px * var(--ui-font-scale))); }
-.model-controls select { height: 30px; min-height: 30px; max-width: 155px; font-size: max(5px, calc(10px * var(--ui-font-scale))); }
+.model-controls select { height: 30px; min-height: 30px; min-width: 0; max-width: 155px; font-size: max(5px, calc(10px * var(--ui-font-scale))); }
 .model-controls button { height: 30px; padding: 5px 10px; font-size: max(5px, calc(10px * var(--ui-font-scale))); }
-.model-controls .settings-actions { display: flex; align-items: center; gap: 6px; }
+.model-controls .settings-actions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
+.model-controls .native-actions { min-width: 0; max-width: 100%; justify-content: flex-end; }
 .permission-switch {
   display: inline-flex;
   flex: none;
@@ -1852,7 +1853,7 @@ html[data-theme="light"] .terminal-context-box textarea { background: #fff; colo
   body:not(.mobile-layout) .composer-top .model-controls {
     grid-column: 1 / -1;
     flex-wrap: wrap;
-    justify-content: flex-start;
+    justify-content: flex-end;
   }
 }
 
@@ -2013,13 +2014,13 @@ html[data-theme="light"] .mobile-layout .model-settings-toggle {
   grid-column: 1 / -1;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
-  width: 100%;
+  width: min(100%, 360px);
   gap: 6px 8px;
   border-top: 1px solid var(--theme-surface-29312c, #29312c);
   padding-top: 7px;
 }
 .mobile-layout .model-controls select { width: 100%; max-width: none; min-height: 38px; }
-.mobile-layout .model-controls .settings-actions { grid-column: 1 / -1; }
+.mobile-layout .model-controls .settings-actions, .mobile-layout .model-controls .native-actions { grid-column: 1 / -1; }
 .mobile-layout .model-controls button { flex: 1; min-height: 38px; }
 .mobile-layout .permission-switch { min-height: 38px; }
 .mobile-layout #messageForm { padding: 7px 9px; }
