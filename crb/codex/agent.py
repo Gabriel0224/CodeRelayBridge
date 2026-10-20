@@ -2415,20 +2415,30 @@ class HostAgent:
             self.last_sent = {tid: view, **{key: value for key, value in self.last_sent.items() if key != tid}}
         return {'ok': True, 'refreshed': True, 'source': view['source']}
 
-    def read_history(self, tid):
+    def read_history(self, tid, *, native_fallback=True):
         with self.lock:
             source = self.paths.get(tid)
             meta = next((r for r in self.catalog if r['id'] == tid), None)
-        if not source or not meta:
+        if not meta:
             raise RuntimeError('没有找到该会话')
+        if not source:
+            if not native_fallback:
+                raise FileNotFoundError('该会话尚无本地日志路径')
+            return self.read_native_history_view(tid, meta)
         path = Path(normalize_local_path(source)).resolve()
         if not any((path.is_relative_to(self.home / name) for name in ('sessions', 'archived_sessions'))):
             raise RuntimeError('会话日志路径不在 Codex 会话目录中')
+        try:
+            stream = path.open('rb')
+        except FileNotFoundError:
+            if not native_fallback:
+                raise
+            return self.read_native_history_view(tid, meta)
         items = []
         seen_items = set()
         asset_factory = lambda source, kind=None, name=None: self.register_asset(tid, source, kind, name)
-        with path.open('rb') as stream:
-            size = path.stat().st_size
+        with stream:
+            size = os.fstat(stream.fileno()).st_size
             if size > 8 * 1024 * 1024:
                 stream.seek(-8 * 1024 * 1024, 2)
                 stream.readline()
@@ -2463,6 +2473,13 @@ class HostAgent:
         items = compact_public_items(items)
         recent_items = bounded_recent_items(items[-500:])
         return {**meta, 'source': 'local-history', 'owned': False, 'status': meta.get('status', 'notLoaded'), 'unread': meta.get('unread'), 'items': recent_items, 'totalItems': len(items), 'partialHistory': size > 8 * 1024 * 1024 or len(recent_items) < len(items), 'canLoadHistory': bool(self.appserver), 'updated': time.time(), 'pendingRequests': 0}
+
+    def read_native_history_view(self, tid, meta):
+        """Read a known, unloaded chat without requiring its rollout to exist."""
+        page = self.read_history_page(tid, {'limit': 5})
+        items = page['items']
+        recent_items = bounded_recent_items(items)
+        return {**meta, 'source': 'codex-app-server', 'owned': False, 'status': meta.get('status', 'notLoaded'), 'unread': meta.get('unread'), 'items': recent_items, 'totalItems': len(items), 'partialHistory': bool(page.get('nextCursor') or len(recent_items) < len(items)), 'canLoadHistory': bool(self.appserver), 'updated': time.time(), 'pendingRequests': 0}
 
     def rollout_item_timestamps(self, tid, wanted):
         """Enrich existing history reads locally, without another remote request."""
@@ -3946,7 +3963,10 @@ class HostAgent:
                             self.inflight.add(command['id'])
                             self.queue_command(command)
                 for tid in refills:
-                    fallback = self.read_history(tid)
+                    try:
+                        fallback = self.read_history(tid, native_fallback=False)
+                    except FileNotFoundError:
+                        continue
                     with self.lock:
                         if tid not in self.states:
                             self.last_sent[tid] = fallback
