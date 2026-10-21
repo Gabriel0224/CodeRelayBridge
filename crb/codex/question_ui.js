@@ -229,13 +229,14 @@
   const selection = native[contract[4]], question = native[contract[5]], select = native[contract[6]];
   if (!selection?.scope || !question?.resolve || typeof select !== 'function' || typeof parseAccepted !== 'function')
     throw new Error('Native question selection contract changed');
+  const control = request.operation === 'question-control';
   if (request.hostId !== 'local' || typeof request.threadId !== 'string' || !request.threadId ||
       typeof request.turnId !== 'string' || !request.turnId ||
-      !Array.isArray(request.replies) || request.replies.length < 1 || request.replies.length > 8)
+      (!control && (!Array.isArray(request.replies) || request.replies.length < 1 || request.replies.length > 8)))
     throw new Error('Invalid question acknowledgement');
   const turnId = request.turnId;
   const answers = new Map();
-  for (const reply of request.replies) {
+  for (const reply of request.replies || []) {
     const id = JSON.parse(reply.questionItemId);
     if (!Array.isArray(id) || id.length !== 3 || id[0] !== 'request_user_input_async' ||
         typeof id[1] !== 'string' || !id[1] || !Number.isInteger(id[2]) || id[2] < 0 ||
@@ -268,6 +269,53 @@
   visit(window.__codexRoot?._internalRoot?.current);
   if (!scope) throw new Error('Native question scope unavailable');
   const hostThread = {hostId: request.hostId, threadId: request.threadId};
+  if (control) {
+    // These are the reviewed renderer's presentation atoms, not model answers.
+    // Closing preserves drafts; skipping clears only the explicitly skipped
+    // question and advances. No click, turn start, synthetic reply or polling.
+    if (!['close', 'skip', 'reopen'].includes(request.action) ||
+        typeof request.entityKey !== 'string' || !request.entityKey ||
+        !Array.isArray(request.questionIds) || !request.questionIds.length || request.questionIds.length > 8 ||
+        new Set(request.questionIds).size !== request.questionIds.length ||
+        !request.questionIds.includes(request.questionId)) throw new Error('Invalid question control');
+    for (const value of request.questionIds) {
+      const id = JSON.parse(value);
+      if (!Array.isArray(id) || id.length !== 3 || id[0] !== 'request_user_input_async' ||
+          typeof id[1] !== 'string' || !id[1] || !Number.isInteger(id[2]) || id[2] < 0)
+        throw new Error('Invalid native question identity');
+    }
+    const selected = scope.get(selection, hostThread);
+    const entityKey = selected?.selectedQuestionKey?.entityKey || request.entityKey;
+    const key = {hostId: 'local', threadId: request.threadId, entityKey};
+    const states = request.questionIds.map(itemId => scope.get(question, {...key, itemId}));
+    if (states.some(state => !state || state.turnId !== turnId || state.isSubmitting))
+      throw new Error('Native question changed; refresh before continuing');
+    if (selected && (selected.selectedQuestionKey.threadId !== request.threadId ||
+        !request.questionIds.includes(selected.selectedQuestionKey.itemId)))
+      return {status: 'different-question-preserved'};
+    if (request.action === 'close') {
+      if (!selected) return {status: 'question-not-open'};
+      select(scope, hostThread, null);
+      return {status: 'question-closed'};
+    }
+    if (request.action === 'reopen') {
+      select(scope, hostThread, {selectedQuestionKey: {...key, itemId: request.questionId},
+        questionIds: request.questionIds});
+      return {status: 'question-opened'};
+    }
+    const index = request.questionIds.indexOf(request.questionId);
+    const state = states[index];
+    scope.set(question, {...key, itemId: request.questionId}, {...state, draft: '', isSkipped: true});
+    // Leave other questions/turns untouched. The original App retains the
+    // skipped question in its numbered list and sends earlier nonempty drafts
+    // only when reaching the last question; the relay sends those separately.
+    if (selected) {
+      const nextId = request.questionIds[index + 1];
+      select(scope, hostThread, nextId ? {...selected,
+        selectedQuestionKey: {...key, itemId: nextId}} : null);
+    }
+    return {status: 'question-skipped'};
+  }
   // Idle replies start a NEW turn. The App's old-question atom watches only
   // its own turn, so also read accepted replies from the App's cached history
   // using the App's exact parser. No history fetch, extra model call, or poll.

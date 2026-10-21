@@ -973,24 +973,28 @@ def scheduled_completion_notification(state):
 def pending_async_questions(state):
     """Resolve exact native question IDs across turns, before view truncation.
 
-    Desktop may accept an idle answer in a NEW turn. Ordinary messages and
-    pending/rejected steering messages are not answers to an async question.
+    An ordinary, App-accepted NEW turn retires the previous question surface,
+    but is not an answer. Queued messages and steers in the same turn do not.
     """
     offered = []
     answered = set()
-    for turn in state_turns(state):
+    ordinary_turn = -1
+    for turn_index, turn in enumerate(state_turns(state)):
         for item in turn.get('items', []):
             if not isinstance(item, dict):
                 continue
             questions = async_message_questions(item)
             if questions:
-                offered.append((item, questions))
+                offered.append((turn_index, item, questions))
             if item.get('type') in ('UserMessage', 'userMessage', 'SteeringUserMessage', 'steeringUserMessage'):
                 if item.get('type') in ('SteeringUserMessage', 'steeringUserMessage') and item.get('status') != 'accepted':
                     continue
                 content = item.get('content', item.get('input', item.get('text', '')))
-                answered.update((reply['questionItemId'] for reply in async_question_replies(text_content(content))))
-    return [(item, [question for question in questions if question['questionItemId'] not in answered]) for item, questions in offered if any((question['questionItemId'] not in answered for question in questions))]
+                replies = async_question_replies(text_content(content))
+                answered.update((reply['questionItemId'] for reply in replies))
+                if item.get('type') in ('UserMessage', 'userMessage') and content and (not replies):
+                    ordinary_turn = turn_index
+    return [(item, [question for question in questions if question['questionItemId'] not in answered]) for turn_index, item, questions in offered if turn_index >= ordinary_turn and any((question['questionItemId'] not in answered for question in questions))]
 
 def latest_async_question(state):
     pending = pending_async_questions(state)
@@ -3468,6 +3472,24 @@ class HostAgent:
         if not state:
             raise RuntimeError('请先在桌面 App 打开这条对话，等待网页显示“实时同步”')
         question_ack = None
+        if action == 'question_control':
+            turn_id = payload.get('turnId')
+            question_ids = payload.get('questionIds')
+            operation = payload.get('operation')
+            if operation not in ('close', 'skip', 'reopen'):
+                raise ValueError('不支持的问题操作')
+            question_turn = next((turn for turn in state_turns(state) if turn.get('turnId') == turn_id), None)
+            offered_ids = {question['questionItemId'] for item, questions in pending_async_questions(state) if question_turn and any((value.get('id') == item.get('id') for value in question_turn.get('items', []) if isinstance(value, dict))) for question in questions}
+            if not isinstance(question_ids, list) or not 1 <= len(question_ids) <= 8 or any((not isinstance(value, str) or value not in offered_ids for value in question_ids)) or (len(set(question_ids)) != len(question_ids)):
+                raise RuntimeError('这组选项已过期，请刷新对话')
+            current_id = payload.get('questionId')
+            if current_id not in question_ids:
+                raise ValueError('问题标识无效')
+            history = state.get('turnHistory') or {}
+            entities = (history.get('history') or {}).get('entitiesByKey', {})
+            entity_key = next((key for key, value in entities.items() if isinstance(value, dict) and value.get('turnId') == turn_id), 'turn:' + str(turn_id))
+            result = self.question_ui.control(tid, turn_id, entity_key, operation, question_ids, current_id)
+            return {'ok': True, 'transport': 'desktop-question-ui', 'questionUi': result, 'confirmedAt': time.time()}
         if action == 'answer_choice':
             item_id = str(payload.get('itemId', ''))
             offered, questions = next(((item, questions) for item, questions in pending_async_questions(state) if str(item.get('id', '')) == item_id), (None, []))
@@ -3477,10 +3499,12 @@ class HostAgent:
             if requested_ids is not None and requested_ids != [question['questionItemId'] for question in questions]:
                 raise RuntimeError('部分问题已在原 App 回答，请等待同步后回答剩余问题')
             answers = payload.get('answers')
-            if not isinstance(answers, list) or len(answers) != len(questions) or any((not isinstance(answer, str) or not answer.strip() or len(answer) > 4000 for answer in answers)):
+            skipped = payload.get('skippedQuestionIds', [])
+            ids = [question['questionItemId'] for question in questions]
+            if not isinstance(skipped, list) or len(skipped) > 8 or any((not isinstance(value, str) or value not in ids for value in skipped)) or (len(set(skipped)) != len(skipped)) or (not isinstance(answers, list)) or (len(answers) != len(questions)) or any((not isinstance(answer, str) or len(answer) > 4000 or (not answer.strip() and question_id not in skipped) or (answer.strip() and question_id in skipped) for question_id, answer in zip(ids, answers))) or (not any((answer.strip() for answer in answers))):
                 raise ValueError('请选择或填写每个问题的回答')
             values = [answer.strip() for answer in answers]
-            replies = [{'questionItemId': question['questionItemId'], 'question': question['title'], 'answer': value} for question, value in zip(questions, values)]
+            replies = [{'questionItemId': question['questionItemId'], 'question': question['title'], 'answer': value} for question, value in zip(questions, values) if value]
             question_turn = next((turn for turn in reversed(state_turns(state)) if any((isinstance(item, dict) and item.get('id') == item_id for item in turn.get('items', [])))), None)
             if question_turn and question_turn.get('turnId'):
                 question_ack = (str(question_turn['turnId']), replies)

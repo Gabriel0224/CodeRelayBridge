@@ -551,6 +551,7 @@ body:not(.mobile-layout).sidebar-collapsed #sidebarResizer { display: none; }
 .question-deck-header nav { display: flex; align-items: center; gap: 8px; flex: none; }
 .question-deck-header { flex-wrap: wrap; }
 .question-deck-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.question-deck-feedback { margin: 4px 12px; font-size: .85em; color: var(--muted); }
 #questionDock.question-deck-collapsed { min-height: 0; flex: none; }
 .question-deck-collapsed .question-deck-header { padding-top: 5px; padding-bottom: 5px; }
 .question-deck-header button { min-height: 30px; padding: 5px 8px; font-size: .85em; }

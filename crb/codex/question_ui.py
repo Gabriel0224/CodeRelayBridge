@@ -145,6 +145,20 @@ class CodexQuestionUI:
             except Exception as exc:
                 raise RuntimeError('未能确认原 App 的队列恢复状态，请刷新核对；不会自动重试') from exc
 
+    def control(self, thread_id, turn_id, entity_key, operation, question_ids, current_id):
+        """Explicit presentation action. Never submits an answer or starts a turn."""
+        if operation not in ('close', 'skip', 'reopen') or any((not isinstance(value, str) or not 0 < len(value) <= 200 for value in (thread_id, turn_id, entity_key))) or (not isinstance(question_ids, list)) or (not 1 <= len(question_ids) <= 8) or any((not isinstance(value, str) or len(value) > 500 for value in question_ids)) or (len(set(question_ids)) != len(question_ids)) or (current_id not in question_ids):
+            raise ValueError('问题标识无效')
+        validate_ack(thread_id, turn_id, [{'questionItemId': value, 'answer': 'validate-only'} for value in question_ids])
+        with self.lock:
+            endpoint = discover_debugger()
+            if not endpoint or not verify_debugger(endpoint):
+                return {'status': 'unavailable', 'detail': '问题操作仅在面板生效；原 App 联动通道不可用，未提交答案。'}
+            try:
+                return self._call(endpoint, {'operation': 'question-control', 'platform': sys.platform, 'hostId': 'local', 'threadId': thread_id, 'turnId': turn_id, 'entityKey': entity_key, 'action': operation, 'questionIds': question_ids, 'questionId': current_id})
+            except Exception:
+                return {'status': 'unavailable', 'detail': '问题操作仅在面板生效；未确认原 App 的状态，未提交答案。'}
+
     def acknowledge(self, thread_id, turn_id, replies):
         request = validate_ack(thread_id, turn_id, replies)
         with self.lock:
@@ -248,9 +262,9 @@ class CodexQuestionUI:
                 if message.get('error') or result.get('exceptionDetails'):
                     raise RuntimeError('Native question UI acknowledgement failed')
                 value = result.get('result', {}).get('value')
-                if not isinstance(value, dict) or value.get('status') not in {'closed', 'not-open', 'different-question-preserved', 'new-draft-preserved', 'unanswered-preserved', 'awaiting-native-acceptance', 'capacity-observed', 'capacity-not-rendered', 'queue-resumed', 'queue-not-paused', 'queue-resume-pending'}:
+                if not isinstance(value, dict) or value.get('status') not in {'closed', 'not-open', 'different-question-preserved', 'new-draft-preserved', 'unanswered-preserved', 'awaiting-native-acceptance', 'capacity-observed', 'capacity-not-rendered', 'queue-resumed', 'queue-not-paused', 'queue-resume-pending', 'question-closed', 'question-skipped', 'question-opened', 'question-not-open'}:
                     raise RuntimeError('Invalid acknowledgement result')
-                return value if request.get('operation') in ('capacity-retry-state', 'resume-interrupted-queue') else {**value, 'answerDelivered': True}
+                return value if request.get('operation') in ('capacity-retry-state', 'resume-interrupted-queue', 'question-control') else {**value, 'answerDelivered': True}
             raise TimeoutError('Native UI acknowledgement timed out')
         finally:
             socket.close()

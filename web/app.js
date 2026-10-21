@@ -3489,10 +3489,10 @@ async function branchFromItem(item, button) {
 }
 
 function asyncQuestionKey(item) {
-  return `${selected?.host || ''}/${selected?.thread || ''}/${item.turnId || ''}/${item.id}`;
+  return `${selected?.host || ''}/${selected?.thread || ''}/${item.turnId || ''}/${item.id}/${JSON.stringify((item.questions || []).map(question => question.questionItemId))}`;
 }
 
-async function submitAsyncChoice(item, answers, card) {
+async function submitAsyncChoice(item, answers, card, skippedQuestionIds = []) {
   if (!selected || !current?.owned || !current?.online || busy) return;
   const target = {...selected};
   const key = asyncQuestionKey(item);
@@ -3504,7 +3504,7 @@ async function submitAsyncChoice(item, answers, card) {
   feedback.textContent = '正在把选择送到原对话…';
   try {
     const result = await issueCommand('answer_choice', {...target,
-      payload: {itemId: item.id, answers,
+      payload: {itemId: item.id, answers, ...(skippedQuestionIds.length ? {skippedQuestionIds} : {}),
         ...(item.questions.every(question => question.questionItemId) ?
           {questionIds: item.questions.map(question => question.questionItemId)} : {})}});
     submittedChoices.add(key);
@@ -3512,6 +3512,10 @@ async function submitAsyncChoice(item, answers, card) {
     feedback.textContent = ui?.status === 'closed' ? '✓ 已送达，原 App 提问框已收起' :
       ui?.status === 'unavailable' ? (ui.detail || '✓ 已送达；原 App 提问框联动未确认，不会重发答案') :
       ui?.status === 'awaiting-native-acceptance' ? '✓ 已送达，等待原 App 接受后收起提问框' : '✓ 已送达原对话';
+    if (ui?.status === 'unavailable') {
+      const dock = card.closest('#questionDock');
+      if (dock) dock.questionActionStatus = feedback.textContent;
+    }
     threadRenderSignature = '';
     if (selected?.host === target.host && selected?.thread === target.thread) {
       await refreshThread();
@@ -3527,10 +3531,43 @@ async function submitAsyncChoice(item, answers, card) {
       }
     } else if (card.isConnected) {
       card.querySelectorAll('button, input').forEach(control => control.disabled = false);
+      // Last-question Skip can submit earlier drafts from a collapsed deck.
+      // On rejection, surface those drafts and the error instead of leaving
+      // an apparently dismissed questionnaire with a hidden send failure.
+      const field = [...card.querySelectorAll('fieldset')].find(field =>
+        field.querySelector('input[type="text"]')?.value.trim() || field.querySelector('input:checked')) ||
+        card.querySelector('fieldset');
+      const dock = card.closest('#questionDock');
+      if (field && dock?.questionVisibilityState?.closed) window.CRBQuestionDeck.reveal(field);
+      if (dock) dock.questionActionStatus = error.message;
     }
   } finally {
     choiceBusy.delete(key);
     if (current && selected?.host === target.host && selected?.thread === target.thread) renderQuestionDock(current);
+  }
+}
+
+async function controlAsyncQuestion(item, questionId, operation, card) {
+  if (!selected || !current?.owned || !current?.online) return operation !== 'skip';
+  const target = {...selected};
+  if (choiceBusy.has(asyncQuestionKey(item)) || submittedChoices.has(asyncQuestionKey(item))) return operation !== 'skip';
+  try {
+    const result = await issueCommand('question_control', {...target, payload: {
+      operation, turnId: item.turnId, questionId,
+      questionIds: item.questions.map(question => question.questionItemId)
+    }});
+    const ui = result.questionUi;
+    card.feedback.className = 'async-choice-feedback';
+    card.feedback.textContent = ui?.status === 'unavailable' ? ui.detail : '';
+    const dock = card.closest('#questionDock');
+    if (dock) dock.questionActionStatus = card.feedback.textContent;
+    return selected?.host === target.host && selected?.thread === target.thread;
+  } catch (error) {
+    card.feedback.className = 'async-choice-feedback error';
+    card.feedback.textContent = error.message;
+    const dock = card.closest('#questionDock');
+    if (dock) dock.questionActionStatus = error.message;
+    return false;
   }
 }
 
@@ -3611,6 +3648,7 @@ function renderAsyncQuestions(container, item, state) {
       custom.maxLength = 4000;
       custom.placeholder = '也可输入自定义回答';
       custom.oninput = () => {
+        window.CRBQuestionDeck.answered(field);
         if (custom.value.trim()) field.querySelectorAll('input[type="radio"]')
           .forEach(input => {input.checked = false;});
       };
@@ -3618,6 +3656,7 @@ function renderAsyncQuestions(container, item, state) {
     }
     const {field, legend, custom} = entry;
     field.dataset.questionKey = JSON.stringify(['async', item.turnId || '', item.id, key]);
+    field.onQuestionAction = operation => controlAsyncQuestion(item, question.questionItemId, operation, form);
     legend.setAttribute('data-i18n-ignore', '');
     legend.textContent = question.title;
     const optionSignature = JSON.stringify(question.options || []);
@@ -3631,7 +3670,7 @@ function renderAsyncQuestions(container, item, state) {
         input.name = `choice-${item.id}-${key}`;
         input.value = option;
         input.checked = option === checked;
-        input.onchange = () => {if (input.checked) custom.value = '';};
+        input.onchange = () => {if (input.checked) {custom.value = '';window.CRBQuestionDeck.answered(field);}};
         const text = document.createElement('span');
         text.setAttribute('data-i18n-ignore', '');
         text.textContent = option;
@@ -3662,14 +3701,17 @@ function renderAsyncQuestions(container, item, state) {
   form.choiceState = state;
   reconcileConnectedChildren(form, [heading, ...fields.map(entry => entry.field),
     ...(state === 'ready' ? [form.submit] : []), feedback]);
-  form.onsubmit = event => {
-    event.preventDefault();
+  const submit = (allowSkipped = false) => {
     if (state !== 'ready') return;
     const answers = [];
+    const skipped = [];
     for (const {field, custom, question} of fields) {
       const selectedOption = field.querySelector('input[type="radio"]:checked');
       const answer = custom.value.trim() || selectedOption?.value || '';
       if (!answer) {
+        if (allowSkipped || field.closest('#questionDock')?.questionVisibilityState?.skipped.has(field.dataset.questionKey)) {
+          answers.push('');skipped.push(question.questionItemId);continue;
+        }
         window.CRBQuestionDeck.reveal(field);
         feedback.className = 'async-choice-feedback error';
         feedback.textContent = `请回答「${question.title}」`;
@@ -3677,14 +3719,19 @@ function renderAsyncQuestions(container, item, state) {
       }
       answers.push(answer);
     }
-    submitAsyncChoice(item, answers, form);
+    if (answers.some(Boolean)) submitAsyncChoice(item, answers, form, skipped);
   };
+  for (const [index, {field}] of fields.entries()) {
+    field.onQuestionSkipped = () => {if (index === fields.length - 1) submit(true);};
+  }
+  form.onsubmit = event => {event.preventDefault();submit();};
 }
 
 function clearQuestionDock() {
   const dock = $('questionDock');
   dock.hidden = true;dock.replaceChildren();dock.questionPageKey = '';dock.onQuestionPageChange = null;
   dock.questionVisibilityState = null;
+  dock.questionActionStatus = '';
 }
 
 function renderQuestionDock(thread, items = combinedHistoryItems(thread)) {
@@ -4741,8 +4788,12 @@ function pendingQuestionItems(thread, items) {
     item.type === 'steeringUserMessage' && item.status === 'accepted')
     .flatMap(item => item.questionReplyTo || []));
   const pending = new Map();
-  for (const item of items) {
+  for (const [index, item] of items.entries()) {
     if (!['agentMessage', 'assistantMessage'].includes(item.type) || !Array.isArray(item.questions)) continue;
+    // A queued/optimistic message is not a new native turn. Conversely, a
+    // newly accepted ordinary turn can arrive before the pending-ID snapshot.
+    if (item.turnId && items.slice(index + 1).some(next => next.type === 'userMessage' &&
+        !next.localDelivery && next.turnId && next.turnId !== item.turnId && !next.questionReplyTo?.length)) continue;
     const questions = item.questions.filter((question, index) => {
       const id = question.questionItemId || JSON.stringify(['request_user_input_async', item.id, index]);
       // Accepted native messages can arrive before the pending-ID projection.

@@ -44,6 +44,12 @@ async function answerPendingRequest(request, response, card) {
   } catch (error) {
     feedback.className = 'request-feedback error';
     feedback.textContent = error.message;
+    const field = [...card.querySelectorAll('fieldset')].find(field =>
+      field.querySelector('input[type="text"]')?.value.trim() || field.querySelector('input:checked')) ||
+      card.querySelector('fieldset');
+    const dock = card.closest('#questionDock');
+    if (field && dock?.questionVisibilityState?.closed) window.CRBQuestionDeck.reveal(field);
+    if (dock) dock.questionActionStatus = error.message;
   } finally {
     requestBusy.delete(key);
     if (card.isConnected && card.dataset.submitted !== 'true') {
@@ -180,6 +186,11 @@ function renderUserInputRequest(card, request) {
     custom.setAttribute('aria-label', `${question.header || question.question}的自定义回答`);
     field.append(custom);
     fields.push({question, field, custom, multi});
+    field.addEventListener('input', () => window.CRBQuestionDeck.answered(field));
+    field.addEventListener('change', () => window.CRBQuestionDeck.answered(field));
+    field.onQuestionAction = operation => operation !== 'skip' ||
+      Boolean(selected && current?.owned && current?.online && card.dataset.submitted !== 'true' &&
+        !requestBusy.has(`${selected.host}/${selected.thread}/${request.id}`));
     form.append(field);
   }
   const actions = document.createElement('div');
@@ -190,11 +201,10 @@ function renderUserInputRequest(card, request) {
   submit.textContent = '提交回答';
   submit.dataset.requestAction = 'true';
   actions.append(submit);
-  requestButton(actions, '跳过', () => answerPendingRequest(request,
+  requestButton(actions, '跳过全部', () => answerPendingRequest(request,
     {answers: {}}, card), true);
   form.append(actions);
-  form.onsubmit = event => {
-    event.preventDefault();
+  const submitAnswers = (allowSkipped = false) => {
     const answers = {};
     for (const {question, field, custom, multi} of fields) {
       const chosen = [...field.querySelectorAll('input:checked')].map(input => input.value);
@@ -202,6 +212,7 @@ function renderUserInputRequest(card, request) {
       const values = multi ? [...chosen, ...(typed ? [typed] : [])] :
         (typed ? [typed] : chosen.slice(0, 1));
       if (!values.length) {
+        if (allowSkipped || field.closest('#questionDock')?.questionVisibilityState?.skipped.has(field.dataset.questionKey)) continue;
         window.CRBQuestionDeck.reveal(field);
         const feedback = card.querySelector('.request-feedback');
         feedback.className = 'request-feedback error';
@@ -212,6 +223,10 @@ function renderUserInputRequest(card, request) {
     }
     answerPendingRequest(request, {answers}, card);
   };
+  for (const [index, {field}] of fields.entries()) {
+    field.onQuestionSkipped = () => {if (index === fields.length - 1) submitAnswers(true);};
+  }
+  form.onsubmit = event => {event.preventDefault();submitAnswers();};
   card.append(form);
 }
 
