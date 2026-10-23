@@ -6,8 +6,8 @@ from pathlib import Path
 import re
 import shutil
 import sys
-MODULES = ('agent', 'ipc', 'question_ui', 'native_history', 'sidebar', 'live_view_cache', 'native_updates', 'codex_updates', 'read_progress', 'native_features', 'harness_agent', 'harness_client')
-MODULE_SOURCES = {'agent': 'crb/codex/agent.py', 'ipc': 'crb/codex/ipc.py', 'question_ui': 'crb/codex/question_ui.py', 'native_history': 'crb/codex/native_history.py', 'sidebar': 'crb/codex/sidebar.py', 'native_features': 'crb/codex/native_features.py', 'read_progress': 'crb/codex/read_progress.py', 'live_view_cache': 'crb/common/live_view_cache.py', 'modern_desktop_client': 'crb/common/modern_desktop_client.py', 'harness_agent': 'crb/deepseek/harness_agent.py', 'harness_client': 'crb/deepseek/harness_client.py', 'software_updates': 'crb/optional provider/software_updates.py', 'native_updates': 'crb/updates/native_updates.py', 'codex_updates': 'crb/updates/codex_updates.py', 'mac_native_runtime': 'crb/platform/mac_native_runtime.py'}
+MODULES = ('agent', 'ipc', 'question_ui', 'native_history', 'sidebar', 'live_view_cache', 'native_updates', 'codex_updates', 'read_progress', 'native_features', 'projects', 'native_sidebar', 'sidebar_ui', 'conversation', 'harness_agent', 'harness_client')
+MODULE_SOURCES = {'agent': 'crb/codex/agent.py', 'ipc': 'crb/codex/ipc.py', 'question_ui': 'crb/codex/question_ui.py', 'native_history': 'crb/codex/native_history.py', 'sidebar': 'crb/codex/sidebar.py', 'projects': 'crb/codex/projects.py', 'native_sidebar': 'crb/codex/native_sidebar.py', 'sidebar_ui': 'crb/codex/sidebar_ui.py', 'conversation': 'crb/codex/conversation.py', 'native_features': 'crb/codex/native_features.py', 'read_progress': 'crb/codex/read_progress.py', 'live_view_cache': 'crb/common/live_view_cache.py', 'modern_desktop_client': 'crb/common/modern_desktop_client.py', 'harness_agent': 'crb/deepseek/harness_agent.py', 'harness_client': 'crb/deepseek/harness_client.py', 'software_updates': 'crb/optional provider/software_updates.py', 'native_updates': 'crb/updates/native_updates.py', 'codex_updates': 'crb/updates/codex_updates.py', 'mac_native_runtime': 'crb/platform/mac_native_runtime.py'}
 
 def source_file(root, name):
     root = Path(root)
@@ -70,6 +70,9 @@ def stage_core(source, stage, extras=None, edition='standard'):
     ui_source = source_file(extras.get('question_ui', source), 'question_ui').with_suffix('.js')
     shutil.copy2(ui_source, package / 'question_ui.js')
     manifest['question_ui.js_sha256'] = hashlib.sha256(ui_source.read_bytes()).hexdigest()
+    sidebar_source = source_file(extras.get('sidebar_ui', source), 'sidebar_ui').with_suffix('.js')
+    shutil.copy2(sidebar_source, package / 'sidebar_ui.js')
+    manifest['sidebar_ui.js_sha256'] = hashlib.sha256(sidebar_source.read_bytes()).hexdigest()
     if sys.platform == 'darwin':
         native_bridge = source / 'crb/platform/mac_native_bridge.mjs'
         if not native_bridge.is_file():

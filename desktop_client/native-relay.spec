@@ -11,7 +11,7 @@ hidden = ['desktop_client.self_check', 'yaml', 'websocket'] + (['win32timezone',
 if edition != 'standard':
     hidden += []
 datas, binaries = ([(str(work / 'relay-edition.json'), '.')], [])
-datas += [(str(repo / 'crb/codex/question_ui.js'), 'crb/codex')]
+datas += [(str(repo / ('crb/codex/' + name)), 'crb/codex') for name in ('question_ui.js', 'sidebar_ui.js')]
 excludes = ['PySide6.QtWebEngineCore', 'PySide6.QtWebEngineWidgets', 'PySide6.QtQml']
 if edition == 'standard':
     excludes += ['software_updates', 'relay_bridge_bundle.software_updates']

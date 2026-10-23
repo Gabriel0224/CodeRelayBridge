@@ -8,6 +8,8 @@ import re
 import subprocess
 import sys
 import tomllib
+from crb.codex.native_sidebar import NativeSidebar
+from crb.codex.sidebar_ui import fork_status
 
 def digest(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False, default=str).encode()).hexdigest()
@@ -273,8 +275,12 @@ class NativeFeatures:
                 process.stdout.close()
 
     def execute(self, action, tid, payload):
-        state, cwd = self.context(tid)
         operation = payload.get('operation')
+        if action == 'native_read' and operation == 'fork_status':
+            return fork_status(self.agent, tid, payload)
+        if operation == 'sidebar' or str(operation).startswith('sidebar_'):
+            return NativeSidebar(self.agent).execute(action, tid, payload)
+        state, cwd = self.context(tid)
         if action == 'native_read':
             if operation == 'refresh_thread':
                 return self.agent.refresh_thread_snapshot(tid)

@@ -699,7 +699,7 @@ class Preferences:
         self.path = self.directory / 'preferences.json'
 
     def load(self):
-        defaults = {'panel_url': '', 'close_to_tray': False, 'codex_question_link': True}
+        defaults = {'panel_url': '', 'close_to_tray': False, 'ask_on_close': True, 'codex_question_link': True}
         if self.path.exists():
             try:
                 saved = json.loads(self.path.read_text(encoding='utf-8'))
@@ -707,6 +707,7 @@ class Preferences:
                     defaults.update(saved)
             except (OSError, ValueError):
                 pass
+        defaults['ask_on_close'] = defaults.get('ask_on_close') is not False
         defaults['close_to_tray'] = defaults.get('close_to_tray') is True
         defaults['codex_question_link'] = defaults.get('codex_question_link') is True
         if defaults.get('language') not in ('zh', 'en'):
@@ -736,7 +737,7 @@ class Preferences:
     def save(self, data):
         from desktop_client.connections import atomic_json
         previous = self.load()
-        data = {'panel_url': self.validate_url(data['panel_url'], allow_empty=True), 'close_to_tray': data.get('close_to_tray', previous['close_to_tray']) is True, 'codex_question_link': data.get('codex_question_link', previous['codex_question_link']) is True, **({'language': data.get('language', previous.get('language'))} if data.get('language', previous.get('language')) in ('zh', 'en') else {})}
+        data = {'panel_url': self.validate_url(data['panel_url'], allow_empty=True), 'ask_on_close': data.get('ask_on_close', previous['ask_on_close']) is not False, 'close_to_tray': data.get('close_to_tray', previous['close_to_tray']) is True, 'codex_question_link': data.get('codex_question_link', previous['codex_question_link']) is True, **({'language': data.get('language', previous.get('language'))} if data.get('language', previous.get('language')) in ('zh', 'en') else {})}
         atomic_json(self.path, data)
 
     def save_language(self, value):

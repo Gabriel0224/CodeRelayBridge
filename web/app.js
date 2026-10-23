@@ -104,6 +104,7 @@ let permissionDirty = false;
 let pendingSpeedChange = null;
 let pendingFiles = [];
 let newThreadFiles = [];
+const sentEditDrafts = new Map();
 const drafts = new Map();
 const attachmentDrafts = new Map();
 const filePreviewUrls = new Map();
@@ -574,6 +575,7 @@ function moveProjectBefore(hostId, sourceId, targetId, after = false) {
   if (!sourceId || !targetId || sourceId === targetId) return;
   const host = catalog.find(item => item.id === hostId);
   if (!host) return;
+  if (window.SidebarPanel?.moveProject(host, sourceId, targetId, after)) return;
   const ids = orderedProjectGroups(host, [
     ...(host.projects || []).map(project => ({id: project.id, name: project.name})),
     {id: 'unassigned', name: '未分类'}
@@ -2604,6 +2606,7 @@ function syncSidebarSelectors() {
   ;
   $('codexUpdatesToggle').hidden = !host || applicationId(host) !== 'codex';
   $('codexUpdatesToggle').disabled = !host?.online;
+  window.SidebarPanel?.sync();
   if ($('codexUpdatesDialog').open) {
     if ($('codexUpdatesToggle').hidden) $('codexUpdatesDialog').close();
     else renderCodexUpdates(host);
@@ -2681,11 +2684,11 @@ function appendThread(parent, host, thread, showHost = false) {
 
   const title = document.createElement('span');
   title.className = 'thread-name';
-  title.textContent = plainTitle(thread.title);
+  title.textContent = [window.SidebarPanel?.emoji(host, thread.id), plainTitle(thread.title)].filter(Boolean).join(' ');
   const titleLine = document.createElement('span');
   titleLine.className = 'thread-title-line';
   titleLine.append(title);
-  if (thread.isPinned) {
+  if (window.SidebarPanel?.pinned(host, thread.id) ?? thread.isPinned) {
     const pin = document.createElement('span');
     pin.className = 'thread-clock';
     pin.textContent = '★';
@@ -2851,6 +2854,7 @@ function showThreadContextMenu(hostId, threadId, x, y) {
   $('copyThreadLink').hidden = applicationId(host) !== 'codex' || host.capabilities?.nativeDeepLinks === false;
   $('copyThreadLink').disabled = !thread.id;
   $('copyThreadMarkdown').disabled = busy || !host.online || thread.unavailable;
+  window.SidebarPanel?.threadMenu(host, thread);
   $('threadContextMenu').hidden = false;
   positionThreadContextMenu(x, y);
 }
@@ -2885,6 +2889,7 @@ function showProjectContextMenu(hostId, projectId, x, y) {
   $('projectMenuDelete').hidden = !supportsAction(host, 'project_delete');
   $('projectMenuOpenDirectory').disabled = !project?.roots?.[0] || !host.terminal?.supported;
   $('projectMenuDelete').disabled = busy || !host.online || !project;
+  window.SidebarPanel?.projectMenu(host, project);
   $('projectContextMenu').hidden = false;
   const menu = $('projectContextMenu');
   const viewport = window.visualViewport;
@@ -2971,7 +2976,7 @@ function openProjectRootsDialog(host, project) {
   $('projectRootsDialog').showModal();
 }
 
-function appendProjectGroup(host, group, threads, searching) {
+function appendProjectGroup(host, group, threads, searching, parent = $('catalog')) {
   const section = document.createElement('section');
   section.className = 'project-group';
   section.dataset.projectId = group.id;
@@ -3102,7 +3107,7 @@ function appendProjectGroup(host, group, threads, searching) {
     body.append(empty);
   }
   section.append(heading, body);
-  $('catalog').append(section);
+  parent.append(section);
 }
 
 function renderCatalog({preload = true} = {}) {
@@ -3115,7 +3120,7 @@ function renderCatalog({preload = true} = {}) {
       ({host: sourceHost.id, label: sourceHost.label, online: sourceHost.online, thread})) ||
       (host && {id: host.id, online: host.online, projects: host.projects, threads: host.threads}),
     workspaceThreads.map(item => [item.host, item.thread]),
-    $('search').value, projectFilter, archiveFilter, selected, busy
+    $('search').value, projectFilter, archiveFilter, selected, busy, window.SidebarPanel?.revision(host)
   ]);
   if (signature === lastCatalog) return;
   lastCatalog = signature;
@@ -3159,6 +3164,11 @@ function renderCatalog({preload = true} = {}) {
   const groups = orderedProjectGroups(host, [...(host.projects || []).map(project => ({
     id: project.id, name: project.name
   })), {id: 'unassigned', name: '未分类'}]);
+  if (window.SidebarPanel?.render(host, visible, groups, filter)) {
+    restoreCatalogScroll(host.id);
+    if (preload) scheduleThreadPreload();
+    return;
+  }
   const shownGroups = projectFilter === 'all' ? groups :
     groups.filter(group => group.id === projectFilter);
   let renderedGroups = 0;
@@ -3829,10 +3839,12 @@ function renderItem(item, choiceState = 'past') {
     record = {el, label, content, signature: ''};
     rendered.set(key, record);
   }
-  const editable = supportsAction(currentHost(), 'edit_last_user_turn') && item.type === 'userMessage' && !item.scheduledTrigger && current?.owned && current?.online &&
+  const historicalEditing = currentHost()?.capabilities?.editHistory === true && current?.canEditHistory === true &&
+    supportsAction(currentHost(), 'edit_user_turn');
+  const editable = (historicalEditing || supportsAction(currentHost(), 'edit_last_user_turn')) && item.type === 'userMessage' && !item.localDelivery && !item.scheduledTrigger && !threadPreviewOnly && current?.owned && current?.online &&
     current?.source === 'desktop-live' && current?.status !== 'active' &&
-    current?.editableUserMessage?.turnId === item.turnId &&
-    current?.editableUserMessage?.itemId === item.id;
+    (historicalEditing && item.turnId || current?.editableUserMessage?.turnId === item.turnId &&
+    current?.editableUserMessage?.itemId === item.id);
   const signature = JSON.stringify([item, editable, choiceState, threadPreviewOnly,
     current?.owned, current?.online]);
   if (signature !== record.signature) {
@@ -3877,7 +3889,7 @@ function renderItem(item, choiceState = 'past') {
         edit.type = 'button';
         edit.className = 'message-action';
         edit.textContent = '编辑重发';
-        edit.title = '编辑最后一条消息并替换该轮回复';
+        edit.title = historicalEditing ? '编辑这条消息并重新生成后续内容' : '编辑最后一条消息并替换该轮回复';
         edit.onclick = () => showSentMessageEditor(item, record);
         actions.append(edit);
       }
@@ -4009,34 +4021,46 @@ function showSentMessageEditor(item, record) {
     return;
   }
   const panel = document.createElement('div');
+  const target = {...selected};
+  const historical = currentHost()?.capabilities?.editHistory === true && current?.canEditHistory === true;
+  const expectedLastTurnId = current?.lastTurnId || (current?.items || []).at(-1)?.turnId;
+  const draftKey = `${historyKey(target)}/${item.turnId}/${item.id}`;
   panel.className = 'sent-edit-panel';
   const editor = document.createElement('textarea');
-  editor.setAttribute('aria-label', '编辑最后一条已发送消息');
+  editor.setAttribute('aria-label', '编辑已发送消息');
   editor.maxLength = 32000;
   editor.rows = 5;
-  editor.value = editableMessageText(item.text);
+  editor.value = sentEditDrafts.get(draftKey) ?? editableMessageText(item.text);
+  editor.oninput = () => {
+    sentEditDrafts.delete(draftKey);
+    sentEditDrafts.set(draftKey, editor.value);
+    while (sentEditDrafts.size > 100) sentEditDrafts.delete(sentEditDrafts.keys().next().value);
+  };
   const hint = document.createElement('p');
-  hint.textContent = '重新发送会替换这条消息之后的最新回复；原附件会保留。';
+  hint.textContent = historical ? '重新发送会替换这条消息及后续对话内容；原附件会保留，磁盘上的文件改动不会自动撤销。' :
+    '重新发送会替换这条消息之后的最新回复；原附件会保留。';
   const actions = document.createElement('div');
   actions.className = 'sent-edit-actions';
   const cancel = document.createElement('button');
   cancel.type = 'button';
   cancel.className = 'quiet';
   cancel.textContent = '取消';
-  cancel.onclick = () => { panel.remove(); record.editPanel = null; };
+  cancel.onclick = () => { sentEditDrafts.delete(draftKey); panel.remove(); record.editPanel = null; };
   const resend = document.createElement('button');
   resend.type = 'button';
   resend.textContent = '重新发送';
   resend.onclick = async () => {
     const text = editor.value.trim();
-    if (!text || busy || !selected) {
+    if (!text || busy || selected?.host !== target.host || selected?.thread !== target.thread) {
       if (!text) {
         $('sendResult').className = 'error';
         $('sendResult').textContent = '请输入修改后的消息';
       }
       return;
     }
-    const target = {...selected};
+    if (historical && item.turnId !== expectedLastTurnId &&
+        !window.confirm('重新发送将替换这条消息之后的对话内容，磁盘文件不会自动撤销。继续？')) return;
+    sentEditDrafts.set(draftKey, editor.value);
     busy = true;
     editor.disabled = true;
     resend.disabled = true;
@@ -4044,8 +4068,10 @@ function showSentMessageEditor(item, record) {
     $('sendResult').className = '';
     $('sendResult').textContent = '正在编辑并重新发送…';
     try {
-      await issueCommand('edit_last_user_turn', {...target,
-        payload: {turnId: item.turnId, itemId: item.id, text}});
+      const result = await issueCommand(historical ? 'edit_user_turn' : 'edit_last_user_turn', {...target,
+        payload: {turnId: item.turnId, itemId: item.id, text, ...(historical ?
+          {originalText: editableMessageText(item.text), expectedLastTurnId} : {})}});
+      threadSnapshotEpoch += 1;
       historyPages.delete(historyKey(target));
       threadSnapshots.delete(threadKey(target.host, target.thread));
       threadFetches.delete(threadKey(target.host, target.thread));
@@ -4053,7 +4079,13 @@ function showSentMessageEditor(item, record) {
       clearAssetCache();
       panel.remove();
       record.editPanel = null;
-      $('sendResult').textContent = '✓ 已重新发送，正在刷新消息流';
+      sentEditDrafts.delete(draftKey);
+      if (result.messageSent === false) {
+        $('editRecoveryText').value = text;
+        $('editRecoveryHint').textContent = '历史已回退，重新发送尚未确认。请先核对原 App；编辑内容可在这里复制。';
+        $('editRecoveryDialog').showModal();
+        $('sendResult').textContent = result.warning || '历史已回退，重新发送尚未确认';
+      } else $('sendResult').textContent = '✓ 已重新发送，正在刷新消息流';
       await refresh();
     } catch (error) {
       $('sendResult').textContent = error.message;
@@ -4075,6 +4107,9 @@ function showSentMessageEditor(item, record) {
   editor.focus();
   editor.setSelectionRange(editor.value.length, editor.value.length);
 }
+
+$('editRecoveryClose').onclick = () => $('editRecoveryDialog').close();
+$('editRecoveryCopy').onclick = () => copyPlainText($('editRecoveryText').value, $('editRecoveryCopy'));
 
 function isProcessItem(item) {
   if (item.type === 'contextCompaction' || item.type === 'systemNotice') return false;
@@ -5151,6 +5186,22 @@ function populateNewThreadEfforts(desired) {
   $('newThreadEffort').disabled = !items.length;
 }
 
+function syncNewThreadSwitches() {
+  const host = currentHost(), codex = applicationId(host) === 'codex';
+  const supported = host?.capabilities?.newThreadSettings === true;
+  const tiers = modelServiceTiers($('newThreadModel').value);
+  const fast = tiers.some(tier => ['priority', 'fast', 'ultrafast'].includes(tier.id)) &&
+    tiers.some(tier => tier.id === 'default');
+  $('newThreadSpeedControl').hidden = !codex;
+  $('newThreadAccessControl').hidden = !codex || host?.capabilities?.permissions === false;
+  $('newThreadSpeed').disabled = !supported || !fast;
+  $('newThreadFullAccess').disabled = !supported || host?.capabilities?.permissions === false;
+  if (!fast) $('newThreadSpeed').checked = false;
+  $('newThreadSpeedControl').title = !supported ? '请更新目标客户端以支持首轮设置' :
+    fast ? '加速模式会增加额度消耗；实际可用性由原 App 决定。' : '此模型未提供加速模式。';
+  $('newThreadAccessControl').title = supported ? '选择新对话从第一轮开始使用的访问权限' : '请更新目标客户端以支持首轮设置';
+}
+
 function syncNewThreadPasteButton() {
   const button = $('newThreadPasteCopied');
   const copied = fileClipboard;
@@ -5254,6 +5305,9 @@ function openNewThreadDialog(preferredProjectId = null) {
   $('newThreadModel').disabled = !host.models.length;
   populateNewThreadEfforts(selected?.host === host.id ?
     (current?.reasoningEffort || meta?.reasoningEffort || '') : '');
+  $('newThreadSpeed').checked = ['priority', 'fast', 'ultrafast'].includes(current?.serviceTier);
+  $('newThreadFullAccess').checked = selected?.host === host.id && current?.fullAccess === true;
+  syncNewThreadSwitches();
   $('threadDeviceHint').textContent = `目标电脑：${host.label}`;
   $('newThreadPrompt').value = '';
   $('threadError').textContent = '';
@@ -5414,6 +5468,15 @@ async function refreshThread(afterCommand = false, options = {}) {
 function renderThreadSnapshot(thread, meta, target, online, preview = false, revision = 0) {
   reconcileLocalOutgoing(target, thread);
   const previous = !threadPreviewOnly && !threadWatchPending && current?.id === thread.id ? current : null;
+  const previousTail = previous?.lastTurnId || previous?.items?.at(-1)?.turnId;
+  if (!preview && previousTail && !(thread.items || []).some(item => item.turnId === previousTail)) {
+    // Native edit/revert can also originate on another device. Old opaque
+    // cursors and expanded pages must never resurrect the removed future.
+    historyPages.delete(historyKey(target));
+    threadSnapshots.delete(threadKey(target.host, target.thread));
+    threadFetches.delete(threadKey(target.host, target.thread));
+    threadSnapshotEpoch += 1;
+  }
   threadPreviewOnly = preview;
   current = {...meta, ...thread, unread: meta.unread ?? thread.unread,
     online: preview ? false : online, owned: preview ? false : thread.owned};
@@ -7550,11 +7613,21 @@ function setupSidebarMenu(toggleId, menuId, optionSelector, select) {
     toggle.setAttribute('aria-expanded', 'false');
     if (restoreFocus) toggle.focus();
   };
+  const position = () => {
+    if (menu.hidden) return;
+    menu.style.translate = '';
+    const rect = menu.getBoundingClientRect(), viewport = window.visualViewport;
+    const left = viewport?.offsetLeft || 0, top = viewport?.offsetTop || 0;
+    const x = Math.max(left + 8, Math.min(rect.left, left + (viewport?.width || innerWidth) - rect.width - 8));
+    const y = Math.max(top + 8, Math.min(rect.top, top + (viewport?.height || innerHeight) - rect.height - 8));
+    menu.style.translate = `${x - rect.left}px ${y - rect.top}px`;
+  };
   const open = () => {
     for (const other of sidebarMenus) other.close();
     menu.hidden = false;
     toggle.setAttribute('aria-expanded', 'true');
-    (menu.querySelector('[aria-checked="true"]') || menu.querySelector(optionSelector))?.focus();
+    (menu.querySelector('[aria-checked="true"]') || menu.querySelector(optionSelector))?.focus({preventScroll: true});
+    position();
   };
   toggle.onclick = () => menu.hidden ? open() : close(true);
   toggle.onkeydown = event => {
@@ -7576,8 +7649,11 @@ function setupSidebarMenu(toggleId, menuId, optionSelector, select) {
       options[next].focus();
     } else if (event.key === 'Tab') close(true);
   };
-  sidebarMenus.push({toggle, menu, close});
+  sidebarMenus.push({toggle, menu, close, position});
 }
+window.addEventListener('resize', () => sidebarMenus.forEach(({position}) => position()));
+window.visualViewport?.addEventListener('resize', () => sidebarMenus.forEach(({position}) => position()));
+window.visualViewport?.addEventListener('scroll', () => sidebarMenus.forEach(({position}) => position()));
 setupSidebarMenu('paletteToggle', 'paletteMenu', '[data-palette-option]', option => {
   applyPalette(option.dataset.paletteOption, true);
 });
@@ -8363,7 +8439,7 @@ $('cancelThread').onclick = () => {
   clearNewThreadFiles(true);
 };
 $('cancelRenameThread').onclick = () => $('renameThreadDialog').close();
-$('newThreadModel').onchange = () => populateNewThreadEfforts('');
+$('newThreadModel').onchange = () => { populateNewThreadEfforts(''); syncNewThreadSwitches(); };
 $('newThreadAddFile').onclick = () => {
   if (!busy) $('newThreadFileInput').click();
 };
@@ -8436,11 +8512,17 @@ $('threadForm').onsubmit = async event => {
           '我接下来会发送包含任务说明和附件的消息。请等待下一条消息，不要开始执行。' : prompt,
         projectId,
         model: $('newThreadModel').value,
-        effort: $('newThreadEffort').value
+        effort: $('newThreadEffort').value,
+        ...(applicationId(host) === 'codex' && host.capabilities?.newThreadSettings === true ? {
+          fullAccess: !$('newThreadFullAccess').disabled && $('newThreadFullAccess').checked,
+          ...(modelServiceTiers($('newThreadModel').value).length ? {serviceTier:
+            $('newThreadSpeed').checked && !$('newThreadSpeed').disabled ?
+              ['priority', 'fast', 'ultrafast'].find(id => modelServiceTiers($('newThreadModel').value).some(tier => tier.id === id)) : 'default'} : {})
+        } : {})
       }
     });
     createdId = result.threadId || result.clientThreadId || '';
-    if (deferred && createdId) {
+    if ((deferred || result.initialMessagePending) && createdId) {
       drafts.set(`${targetHostId}/${createdId}`, prompt);
       attachmentDrafts.set(`${targetHostId}/${createdId}`, files);
     }
@@ -8473,7 +8555,12 @@ $('threadForm').onsubmit = async event => {
         attachError = error.message;
       }
     }
-    if (deferred && created && current?.id === created.id && current?.owned && current?.online) {
+    if (result.initialMessagePending) {
+      $('sendResult').className = 'error';
+      $('sendResult').textContent = result.initialMessageOutcomeUnknown ?
+        '新对话已创建，首条消息是否发送尚未确认；草稿已保留，请先核对原 App，避免重复发送。' :
+        `新对话已创建，首条消息尚未发送；草稿已保留。${result.initialMessageWarning || ''}`;
+    } else if (deferred && created && current?.id === created.id && current?.owned && current?.online) {
       const target = {host: targetHostId, thread: created.id};
       const outgoing = beginLocalOutgoing(target, uuid(), prompt, files);
       detachComposerSubmission(target, outgoing);
@@ -8527,7 +8614,8 @@ $('projectForm').onsubmit = async event => {
     if (result.project?.id) projectFilter = result.project.id;
     captureHostNavigation(host.id);
     $('sendResult').className = '';
-    $('sendResult').textContent = '✓ 项目已添加';
+    $('sendResult').textContent = result.registrationPending ?
+      (result.warning || '项目已在原 App 登记，请刷新后核对') : '✓ 项目已添加';
     await refresh();
   } catch (error) {
     $('projectError').textContent = error.message;

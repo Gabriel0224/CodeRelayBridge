@@ -11,6 +11,7 @@ import sys
 import threading
 import time
 import uuid
+import psutil
 
 class AppToolsUnavailable(RuntimeError):
     pass
@@ -91,15 +92,15 @@ def windows_process_environment(pid):
     kernel32.CloseHandle.restype = wintypes.BOOL
     ntdll.NtQueryInformationProcess.argtypes = [wintypes.HANDLE, wintypes.ULONG, ctypes.c_void_p, wintypes.ULONG, ctypes.POINTER(wintypes.ULONG)]
     ntdll.NtQueryInformationProcess.restype = wintypes.LONG
-    handle = kernel32.OpenProcess(1024 | 16, False, int(pid))
+    handle = kernel32.OpenProcess(4096 | 16, False, int(pid))
     if not handle:
         return {}
 
-    def read(address, size):
+    def read(address, size, allow_partial=False):
         buffer = ctypes.create_string_buffer(size)
         received = ctypes.c_size_t()
         ok = kernel32.ReadProcessMemory(handle, ctypes.c_void_p(address), buffer, size, ctypes.byref(received))
-        if not ok:
+        if not ok and (not (allow_partial and received.value)):
             raise OSError(ctypes.get_last_error(), 'ReadProcessMemory')
         return buffer.raw[:received.value]
     try:
@@ -114,12 +115,15 @@ def windows_process_environment(pid):
         raw = bytearray()
         for offset in range(0, 1024 * 1024, 4096):
             try:
-                raw.extend(read(environment + offset, 4096))
+                chunk = read(environment + offset, 4096, allow_partial=True)
+                raw.extend(chunk)
             except OSError:
                 break
             end = next((index for index in range(0, len(raw) - 3, 2) if raw[index:index + 4] == b'\x00\x00\x00\x00'), -1)
             if end >= 0:
                 raw = raw[:end]
+                break
+            if len(chunk) < 4096:
                 break
         values = raw.decode('utf-16-le', errors='ignore').split('\x00')
         return dict((value.split('=', 1) for value in values if '=' in value and (not value.startswith('='))))
@@ -131,17 +135,19 @@ def windows_process_environment(pid):
 def desktop_app_tool_paths():
     """Discover the app-tools endpoint exported to Desktop's codex app-server."""
     if os.name == 'nt':
-        startupinfo = subprocess.STARTUPINFO()
-        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-        startupinfo.wShowWindow = subprocess.SW_HIDE
         try:
-            output = subprocess.check_output([shutil.which('pwsh') or 'powershell.exe', '-NoProfile', '-NonInteractive', '-Command', "Get-CimInstance Win32_Process | Where-Object Name -eq 'codex.exe' | Select-Object -ExpandProperty ProcessId"], text=True, encoding='utf-8', errors='ignore', timeout=8, creationflags=subprocess.CREATE_NO_WINDOW, startupinfo=startupinfo)
-        except (OSError, subprocess.SubprocessError):
+            owner = psutil.Process().username().casefold()
+        except (psutil.Error, OSError):
             return
-        for value in output.split():
-            if not value.isdigit():
+        for process in psutil.process_iter(('pid', 'name')):
+            try:
+                if str(process.info.get('name') or '').casefold() != 'codex.exe':
+                    continue
+                if process.username().casefold() != owner:
+                    continue
+                path = windows_process_environment(process.pid).get('CODEX_APP_TOOLS_PIPE_PATH')
+            except (psutil.Error, OSError):
                 continue
-            path = windows_process_environment(int(value)).get('CODEX_APP_TOOLS_PIPE_PATH')
             if path:
                 yield path
         return

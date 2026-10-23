@@ -14,6 +14,7 @@ from desktop_client import VERSION
 from desktop_client.edition import edition_label
 from desktop_client.backend import BridgeManager, ClientError, Preferences, StartupShortcut, redact
 from desktop_client.connections import ConnectionStore
+from desktop_client.close_behavior import choose_window_close
 from desktop_client.platform_support import platform_name
 from desktop_client.i18n import QAction, QLabel, QPushButton, QCheckBox, QComboBox, QLineEdit, QToolButton, QMainWindow, QMenu, QMessageBox, QSystemTrayIcon, initialize, language_picker, tr
 from crb.i18n.ui_i18n import language
@@ -488,13 +489,16 @@ class MainWindow(QMainWindow):
         self.autostart.setChecked(self.startup.enabled())
         self.autostart.setEnabled(bool(getattr(sys, 'frozen', False)))
         layout.addWidget(self.autostart)
-        self.close_to_tray = QCheckBox('关闭窗口时最小化到托盘（保持接入）')
+        self.ask_on_close = QCheckBox('关闭窗口时询问关闭方式')
+        self.ask_on_close.setChecked(self.settings.get('ask_on_close', True))
+        layout.addWidget(self.ask_on_close)
+        self.close_to_tray = QCheckBox('不再询问时，关闭窗口最小化到托盘（保持接入）')
         self.close_to_tray.setObjectName('close_to_tray')
         self.close_to_tray.setChecked(self.settings.get('close_to_tray', False))
         layout.addWidget(self.close_to_tray)
         self.close_behavior_note = note('')
         layout.addWidget(self.close_behavior_note)
-        layout.addWidget(note('未勾选时，关闭窗口即断开。无可用托盘时仍关闭并断开，避免客户端隐藏后无法打开。\n“关闭并断开”和 Ctrl+Q 始终彻底退出，不保留独立桥接后台。'))
+        layout.addWidget(note('关闭时可选择直接关闭或最小化到托盘；可记住选择，并在这里重新启用询问。\n“关闭并断开”和 Ctrl+Q 始终彻底退出，不保留独立桥接后台。'))
         self.codex_question_link = QCheckBox('启动 Codex 时启用提问框同步（仅本机）')
         self.codex_question_link.setObjectName('codex_question_link')
         self.codex_question_link.setChecked(self.settings.get('codex_question_link', True))
@@ -514,7 +518,7 @@ class MainWindow(QMainWindow):
         row.addStretch()
         layout.addLayout(row)
         _, _, help_body = foldout(layout, '关闭、暂停和解除配对有什么区别？')
-        help_body.addWidget(note('启动 App：打开对应的本机桌面应用并恢复已配对桥接；已运行时不重复启动，不改变配对。\n关闭 App：确认后请求对应桌面应用退出，可能中断其任务；不强制杀进程，不改变配对和桥接开关。\n关闭窗口：默认断开；启用关闭到托盘且托盘可用时，只隐藏窗口并保持接入。\n关闭并断开 / Ctrl+Q：断开本机所有接入，不留下独立后台，配对保留。\n重启客户端：先关闭全部接入，再重新启动客户端并连接。\n最小化：客户端仍运行，接入保持。\n暂停桥接：只暂停所选应用，可点击启动桥接恢复。\n重新连接：只重新连接所选应用，不重启桌面 App。\n解除配对：断开所选应用并撤销服务器授权，再次接入需重新配对。\n除了明确的“关闭 App”，这些操作不停止原桌面 App，不删除聊天、项目或文件。'))
+        help_body.addWidget(note('启动 App：打开对应的本机桌面应用并恢复已配对桥接；已运行时不重复启动，不改变配对。\n关闭 App：确认后请求对应桌面应用退出，可能中断其任务；不强制杀进程，不改变配对和桥接开关。\n关闭窗口：询问关闭方式；最小化到托盘时保持接入，可选择记住。\n关闭并断开 / Ctrl+Q：断开本机所有接入，不留下独立后台，配对保留。\n重启客户端：先关闭全部接入，再重新启动客户端并连接。\n最小化：客户端仍运行，接入保持。\n暂停桥接：只暂停所选应用，可点击启动桥接恢复。\n重新连接：只重新连接所选应用，不重启桌面 App。\n解除配对：断开所选应用并撤销服务器授权，再次接入需重新配对。\n除了明确的“关闭 App”，这些操作不停止原桌面 App，不删除聊天、项目或文件。'))
         layout.addWidget(note('状态刷新只查询本机，不增加网络轮询。网络检查仅在点击时运行。\n后台自动恢复与网络重连沿用原桥接协议；配对凭证不展示、不打包、不导出。'))
         layout.addStretch()
         return page
@@ -627,19 +631,37 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
         if self.exiting:
             event.accept()
-        else:
-            event.ignore()
-            if not self.shutdown_mode and self.settings.get('close_to_tray') is True and self.tray and self.tray.isVisible() and QSystemTrayIcon.isSystemTrayAvailable():
+            return
+        event.ignore()
+        if self.shutdown_mode or getattr(self, '_close_choosing', False):
+            return
+        self._close_choosing = True
+        try:
+            action = choose_window_close(self, self.preferences, 'client', self.tray_available(), self.settings)
+            saved = self.preferences.load()
+            for key in ('ask_on_close', 'close_to_tray'):
+                self.settings[key] = saved[key]
+                getattr(self, key).setChecked(saved[key])
+            self.update_close_behavior()
+            if action == 'tray' and self.tray_available():
                 self.hide()
                 self.timer.setInterval(5000)
-            else:
+            elif action == 'close':
                 self.exit_client()
+        except Exception as exc:
+            self.notice.setText('保存失败：' + redact(str(exc)))
+        finally:
+            self._close_choosing = False
+
+    def tray_available(self):
+        return bool(self.tray and self.tray.isVisible() and QSystemTrayIcon.isSystemTrayAvailable())
 
     def update_close_behavior(self):
-        available = bool(self.tray and self.tray.isVisible() and QSystemTrayIcon.isSystemTrayAvailable())
+        available = self.tray_available()
         to_tray = self.settings.get('close_to_tray') is True and available
-        self.tray_hint.setText('关闭窗口留在托盘\n关闭并断开才退出' if to_tray else '关闭窗口即断开接入\n保留配对与桌面 App')
-        self.close_behavior_note.setText('托盘可用，保存后生效。' if available else '当前系统没有可用托盘：该选项可保存，关闭窗口时仍会断开并退出。')
+        hint = '关闭窗口时询问关闭方式' if self.settings.get('ask_on_close', True) else '关闭窗口留在托盘\n关闭并断开才退出' if to_tray else '关闭窗口即断开接入\n保留配对与桌面 App'
+        self.tray_hint.setText(hint)
+        self.close_behavior_note.setText('托盘可用，保存后生效。' if available else '当前系统没有可用托盘；关闭时可选择直接关闭。')
 
     def exit_client(self):
         self.begin_shutdown('close')
@@ -928,7 +950,7 @@ class MainWindow(QMainWindow):
             self.notice.setText('连接操作进行中，请完成后再保存客户端设置。')
             return
         try:
-            data = {'panel_url': self.preferences.validate_url(self.url.text(), allow_empty=True), 'close_to_tray': self.close_to_tray.isChecked(), 'codex_question_link': self.codex_question_link.isChecked(), **({'language': self.settings['language']} if 'language' in self.settings else {})}
+            data = {'panel_url': self.preferences.validate_url(self.url.text(), allow_empty=True), 'close_to_tray': self.close_to_tray.isChecked(), 'ask_on_close': self.ask_on_close.isChecked(), 'codex_question_link': self.codex_question_link.isChecked(), **({'language': self.settings['language']} if 'language' in self.settings else {})}
             previous = self.preferences.snapshot()
             self.preferences.save(data)
             if bool(getattr(sys, 'frozen', False)):
@@ -958,6 +980,7 @@ class MainWindow(QMainWindow):
         self.url.setText(self.settings['panel_url'])
         self.autostart.setChecked(self.startup.enabled())
         self.close_to_tray.setChecked(self.settings.get('close_to_tray', False))
+        self.ask_on_close.setChecked(self.settings.get('ask_on_close', True))
         self.codex_question_link.setChecked(self.settings.get('codex_question_link', True))
         self.update_close_behavior()
 

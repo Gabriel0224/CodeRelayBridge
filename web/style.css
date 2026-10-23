@@ -26,8 +26,8 @@
 .native-header { justify-content: space-between; }
 .native-tabs { padding: 14px 0; border-bottom: 1px solid var(--line); }
 .native-tabs [aria-selected="true"] { color: var(--accent); border: 1px solid var(--accent); }
-.native-body { max-height: 65dvh; overflow: auto; padding: 10px 2px; }
-.native-body button { padding: 6px 12px; }
+.native-body, .sidebar-settings-body { max-height: 65dvh; overflow: auto; padding: 10px 2px; }
+.native-body button, .sidebar-settings-body button { padding: 6px 12px; }
 .native-status { color: var(--muted); padding-top: 8px; overflow-wrap: anywhere; }
 .native-card { padding: 14px; border: 1px solid var(--line); border-radius: 10px; margin: 12px 0; }
 .native-card pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 240px; overflow: auto; }
@@ -1517,6 +1517,9 @@ dialog input, dialog textarea, dialog select { width: 100%; }
 #threadForm.drag-active { outline: 2px dashed var(--green); outline-offset: -5px; }
 dialog textarea { min-height: 112px; padding: 10px 11px; resize: vertical; }
 .new-thread-settings { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.new-thread-switches { display: flex; flex-wrap: wrap; gap: 12px 20px; margin: 12px 0; }
+.new-thread-switches:has(label:not([hidden])) { min-height: 32px; }
+#editRecoveryText { width: 100%; resize: vertical; }
 #projectError, #threadError, #renameThreadError { min-height: 21px; margin-top: 10px; font-size: max(5px, calc(11px * var(--ui-font-scale))); }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
 .dialog-actions button { padding: 8px 15px; }
@@ -3229,3 +3232,26 @@ html[data-theme="light"] .project-drag-handle.workspace-drag-handle { color: #ff
 html .project-drag-handle.workspace-drag-handle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .page-reload-recovery{position:fixed;z-index:10000;top:16px;right:16px;max-width:calc(100vw - 32px);padding:12px;display:flex;align-items:center;gap:12px;background:var(--panel,var(--bg,#fff));color:var(--text,#111);border:1px solid var(--line,#aaa);border-radius:12px}
 .page-reload-recovery[hidden]{display:none}
+
+/* Native sidebar uses the existing theme tokens and long-press menus. */
+.sidebar-manage { width: 100%; margin: 5px 0 9px; }
+.native-sidebar-heading { display: flex; align-items: center; gap: 5px; padding: 3px 0; }
+.native-sidebar-heading > button:first-child { flex: 1; text-align: left; font-size: .85em; font-weight: 650; background: transparent; color: inherit; }
+.native-sidebar-heading > button:last-child { background: transparent; color: inherit; padding: 6px 9px; }
+.native-sidebar-content { padding-left: 3px; }
+.native-sidebar-section { margin-bottom: 8px; }
+.sidebar-section-editor { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.sidebar-section-editor > .sidebar-section-name { font-weight: 650; flex: 1 1 150px; overflow-wrap: anywhere; }
+.sidebar-menu-extra { border-bottom: 1px solid var(--theme-surface-39443c, #39443c); padding-bottom: 4px; }
+.sidebar-menu-extra > button { display: block; width: 100%; min-height: 36px; border-radius: 6px; background: transparent; padding: 7px 10px; color: inherit; text-align: left; font-size: inherit; }
+.sidebar-menu-extra > button:hover:not(:disabled), .sidebar-menu-extra > button:focus-visible { background: var(--theme-green-35483a, #35483a); }
+.sidebar-menu-extra > button:disabled { opacity: .52; }
+.sidebar-menu-extra > label { display: block; padding: 7px 10px; font-size: inherit; }
+.sidebar-menu-extra select { width: 100%; margin-top: 4px; color: inherit; background: var(--theme-surface-2b3730, #2b3730); }
+.sidebar-menu-extra option { background: var(--theme-surface-2b3730, #2b3730); }
+html[data-theme="light"] .sidebar-menu-extra > button:hover:not(:disabled), html[data-theme="light"] .sidebar-menu-extra > button:focus-visible { background: var(--theme-green-e6efe7, #e6efe7); }
+html[data-theme="light"] .sidebar-menu-extra select, html[data-theme="light"] .sidebar-menu-extra option { background: #fff; color: #304536; }
+.mobile-layout .sidebar-menu-extra > button, .mobile-layout .sidebar-menu-extra select { min-height: 44px; }
+html .sidebar-menu-extra > button { background: transparent; color: inherit; font-size: max(5px, calc(12px * var(--ui-font-scale))); font-weight: 500; }
+html .native-sidebar-heading > button { background: transparent; color: inherit; }
+.mobile-layout .sidebar-menu-extra > button { font-size: max(5px, calc(14px * var(--ui-font-scale))); }

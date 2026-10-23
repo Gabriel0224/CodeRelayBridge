@@ -7,7 +7,8 @@ from desktop_client.app import STYLE, Work, SingleInstance, app_icon, note, scro
 from desktop_client.platform_support import platform_name
 from desktop_server.backend import ServerManager, suggested_panel_url
 from desktop_client import VERSION
-from desktop_client.backend import Preferences, ClientError
+from desktop_client.backend import Preferences, ClientError, redact
+from desktop_client.close_behavior import choose_window_close
 from desktop_client.i18n import QAction, QFileDialog, QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox, QPushButton, QCheckBox, QSystemTrayIcon, QTableWidget, QFormLayout, initialize, language_picker, tr, status_table_item
 from desktop_client.edition import edition_label
 
@@ -33,6 +34,8 @@ class ServerWindow(QMainWindow):
         self.update_dialog = None
         self.pending_update = None
         self.tray = None
+        self.exiting = False
+        self._close_choosing = False
         main = QWidget()
         main.setObjectName('main')
         self.setCentralWidget(main)
@@ -97,7 +100,7 @@ class ServerWindow(QMainWindow):
         if QSystemTrayIcon.isSystemTrayAvailable():
             self.tray = QSystemTrayIcon(self.windowIcon(), self)
             menu = QMenu()
-            for label, callback in [('打开服务端', self.show_window), ('打开网页面板', self.open_panel), ('退出管理界面', QApplication.instance().quit)]:
+            for label, callback in [('打开服务端', self.show_window), ('打开网页面板', self.open_panel), ('退出管理界面', self.exit_manager)]:
                 action = QAction(label, menu)
                 action.triggered.connect(callback)
                 menu.addAction(action)
@@ -145,6 +148,15 @@ class ServerWindow(QMainWindow):
         languages.addWidget(self.language_select)
         languages.addStretch()
         layout.addLayout(languages)
+        close_settings = self.preferences.load()
+        self.ask_on_close = QCheckBox('关闭窗口时询问关闭方式')
+        self.ask_on_close.setChecked(close_settings['ask_on_close'])
+        self.close_to_tray = QCheckBox('不再询问时，关闭窗口最小化到托盘')
+        self.close_to_tray.setChecked(close_settings['close_to_tray'])
+        for field in (self.ask_on_close, self.close_to_tray):
+            layout.addWidget(field)
+            field.clicked.connect(self.save_close_preferences)
+        layout.addWidget(note('直接关闭只退出管理界面，服务端继续运行。'))
         create = QPushButton('保存服务器配置' if self.manager.config_path().exists() else '创建服务器配置')
         self.save_config_button = create
         create.clicked.connect(self.create_config)
@@ -377,14 +389,50 @@ class ServerWindow(QMainWindow):
         self.activateWindow()
         self.timer.setInterval(5000)
 
-    def closeEvent(self, event):
+    def save_close_preferences(self):
+        try:
+            data = self.preferences.load()
+            data.update(ask_on_close=self.ask_on_close.isChecked(), close_to_tray=self.close_to_tray.isChecked())
+            self.preferences.save(data)
+        except Exception as exc:
+            self.notice.setText('保存失败：' + redact(str(exc)))
+            self.sync_close_preferences()
+
+    def sync_close_preferences(self):
+        saved = self.preferences.load()
+        for key in ('ask_on_close', 'close_to_tray'):
+            getattr(self, key).setChecked(saved[key])
+
+    def tray_available(self):
+        return bool(self.tray and self.tray.isVisible() and QSystemTrayIcon.isSystemTrayAvailable())
+
+    def exit_manager(self):
+        self.exiting = True
+        self.timer.stop()
         if self.tray:
-            event.ignore()
-            self.hide()
-            self.timer.setInterval(30000)
-        else:
+            self.tray.hide()
+        QApplication.instance().quit()
+
+    def closeEvent(self, event):
+        if self.exiting:
             event.accept()
-            QApplication.instance().quit()
+            return
+        event.ignore()
+        if self._close_choosing:
+            return
+        self._close_choosing = True
+        try:
+            action = choose_window_close(self, self.preferences, 'server', self.tray_available())
+            self.sync_close_preferences()
+            if action == 'tray' and self.tray_available():
+                self.hide()
+                self.timer.setInterval(30000)
+            elif action == 'close':
+                self.exit_manager()
+        except Exception as exc:
+            self.notice.setText('保存失败：' + redact(str(exc)))
+        finally:
+            self._close_choosing = False
 
 def main():
     app = QApplication(sys.argv)

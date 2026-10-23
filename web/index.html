@@ -19,6 +19,7 @@
   <script src="/lite/i18n.js" defer></script>
   <script src="/lite/app.js" defer></script>
   <script src="/lite/vendor/native-ui.js" defer></script>
+  <script src="/lite/vendor/sidebar-ui.js" defer></script>
 </head>
 <body>
 <div id="pageReloadRecovery" class="page-reload-recovery" role="status" hidden>
@@ -491,6 +492,14 @@
         <select id="newThreadEffort"></select>
       </div>
     </div>
+    <div class="new-thread-switches">
+      <label id="newThreadSpeedControl" class="permission-switch" for="newThreadSpeed" hidden>
+        <input id="newThreadSpeed" type="checkbox" role="switch"><span>闪电加速</span>
+      </label>
+      <label id="newThreadAccessControl" class="permission-switch" for="newThreadFullAccess" hidden>
+        <input id="newThreadFullAccess" type="checkbox" role="switch"><span>完全访问</span>
+      </label>
+    </div>
     <label for="newThreadPrompt">任务内容</label>
     <textarea id="newThreadPrompt" rows="6" maxlength="32000" placeholder="描述你希望 Codex 完成的任务…"></textarea>
     <div id="newThreadUploadTray" class="upload-tray new-thread-upload-tray" hidden aria-label="新对话附件"></div>
@@ -504,6 +513,16 @@
     <div id="threadError" class="error" role="alert"></div>
     <div class="dialog-actions"><button id="cancelThread" class="secondary" type="button">取消</button><button id="createThread" type="submit">创建并发送</button></div>
   </form>
+</dialog>
+
+<dialog id="editRecoveryDialog">
+  <h2>编辑内容已保留</h2>
+  <p id="editRecoveryHint"></p>
+  <textarea id="editRecoveryText" rows="7" readonly aria-label="未确认发送的编辑内容"></textarea>
+  <div class="dialog-actions">
+    <button id="editRecoveryClose" class="secondary" type="button">关闭</button>
+    <button id="editRecoveryCopy" type="button">复制</button>
+  </div>
 </dialog>
 
 <dialog id="renameThreadDialog">

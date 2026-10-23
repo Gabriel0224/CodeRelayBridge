@@ -93,7 +93,7 @@ def check(role):
             from crb.paths import web_root
             server = importlib.import_module('crb.server.relay')
             assert callable(server.Relay) and callable(server.RelayHTTPServer)
-            for name in ('index.html', 'app.js', 'requests.js', 'style.css', 'i18n.js', 'i18n-catalog.js'):
+            for name in ('index.html', 'app.js', 'requests.js', 'style.css', 'i18n.js', 'i18n-catalog.js', 'vendor/sidebar-ui.js'):
                 assert (web_root() / name).is_file() and (web_root() / name).stat().st_size
 
     def persisted_names():

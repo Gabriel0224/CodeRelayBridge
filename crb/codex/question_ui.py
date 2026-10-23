@@ -232,7 +232,7 @@ class CodexQuestionUI:
                     self.pending_busy = False
         threading.Thread(target=finish_pending, name='codex-question-ui-ack', daemon=True).start()
 
-    def _call(self, endpoint, request):
+    def _call(self, endpoint, request, *, program=None, statuses=None):
         import websocket
         port = endpoint['port']
         base = f'http://127.0.0.1:{port}'
@@ -252,7 +252,7 @@ class CodexQuestionUI:
         timeout = 42 if queue_resume else 10
         socket = websocket.create_connection(url, timeout=timeout, suppress_origin=True, http_proxy_host=None, http_no_proxy=['127.0.0.1', 'localhost', '::1'])
         try:
-            socket.send(json.dumps({'id': 1, 'method': 'Runtime.evaluate', 'params': {'expression': UI_PROGRAM + '(' + json.dumps(request, ensure_ascii=True) + ')', 'awaitPromise': True, 'returnByValue': True, 'timeout': 40000 if queue_resume else 8000}}))
+            socket.send(json.dumps({'id': 1, 'method': 'Runtime.evaluate', 'params': {'expression': (program or UI_PROGRAM) + '(' + json.dumps(request, ensure_ascii=True) + ')', 'awaitPromise': True, 'returnByValue': True, 'timeout': 40000 if queue_resume else 8000}}))
             deadline = time.monotonic() + timeout
             while time.monotonic() < deadline:
                 message = json.loads(socket.recv())
@@ -262,8 +262,10 @@ class CodexQuestionUI:
                 if message.get('error') or result.get('exceptionDetails'):
                     raise RuntimeError('Native question UI acknowledgement failed')
                 value = result.get('result', {}).get('value')
-                if not isinstance(value, dict) or value.get('status') not in {'closed', 'not-open', 'different-question-preserved', 'new-draft-preserved', 'unanswered-preserved', 'awaiting-native-acceptance', 'capacity-observed', 'capacity-not-rendered', 'queue-resumed', 'queue-not-paused', 'queue-resume-pending', 'question-closed', 'question-skipped', 'question-opened', 'question-not-open'}:
+                if not isinstance(value, dict) or value.get('status') not in (statuses or {'closed', 'not-open', 'different-question-preserved', 'new-draft-preserved', 'unanswered-preserved', 'awaiting-native-acceptance', 'capacity-observed', 'capacity-not-rendered', 'queue-resumed', 'queue-not-paused', 'queue-resume-pending', 'question-closed', 'question-skipped', 'question-opened', 'question-not-open'}):
                     raise RuntimeError('Invalid acknowledgement result')
+                if program is not None:
+                    return value
                 return value if request.get('operation') in ('capacity-retry-state', 'resume-interrupted-queue', 'question-control') else {**value, 'answerDelivered': True}
             raise TimeoutError('Native UI acknowledgement timed out')
         finally:

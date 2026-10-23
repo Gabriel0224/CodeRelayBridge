@@ -41,6 +41,9 @@ from crb.codex.read_progress import ReadProgress
 from crb.codex.native_features import NativeFeatures, public_metadata
 from crb.codex.question_ui import CodexQuestionUI
 from crb.codex.native_history import NativeHistoryReader
+from crb.codex.conversation import create_configured
+import crb.codex.sidebar_ui as native_conversation_ui
+from crb.codex.projects import desktop_project_id, local_projects, path_key, project_paths, project_id_map, registered_backend_project
 from crb.common.live_view_cache import LiveTurnCache
 MAX_ITEM_TEXT = 500000
 MAX_TOOL_DETAIL = 200000
@@ -1038,6 +1041,62 @@ def latest_editable_user_item(state):
             return None
     return None
 
+def edit_target(state, turn_id, item_id):
+    if state.get('threadRuntimeStatus', {}).get('type') == 'active':
+        raise RuntimeError('该对话正在运行，请等本轮结束后再编辑')
+    turns = state_turns(state)
+    if any((t.get('status') == 'inProgress' for t in turns)):
+        raise RuntimeError('该对话正在运行，请等本轮结束后再编辑')
+    for turn in turns:
+        if turn.get('turnId') != turn_id:
+            continue
+        for item in turn.get('items', []):
+            if item.get('id') != item_id or item.get('type') not in ('userMessage', 'UserMessage'):
+                continue
+            raw = text_content(item.get('content', item.get('input', item.get('text', ''))))
+            if scheduled_user_trigger(raw) is None:
+                return desktop_user_text(raw)
+    raise RuntimeError('这条消息已变化或尚未加载，请刷新后重试')
+
+def edit_history(agent, tid, payload, target):
+    message = payload.get('text')
+    if not isinstance(message, str) or not 0 < len(message.strip()) <= 32000:
+        raise ValueError('重新发送的消息需为 1–32000 字符')
+    for key in ('turnId', 'itemId', 'expectedLastTurnId'):
+        if not isinstance(payload.get(key), str) or not 0 < len(payload[key]) <= 200:
+            raise ValueError('编辑消息标识无效')
+    if not isinstance(payload.get('originalText'), str) or len(payload['originalText']) > MAX_ITEM_TEXT:
+        raise ValueError('缺少原消息内容，请刷新后重试')
+    with agent.lock:
+        state = agent.states.get(tid, {}).get('state', {})
+    if not any((t.get('turnId') == payload['turnId'] for t in state_turns(state))):
+        agent.ipc.request('thread-follower-load-complete-history', {'conversationId': tid}, version=1, target=target, timeout=60)
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline:
+            with agent.lock:
+                state = agent.states.get(tid, {}).get('state', {})
+            if any((t.get('turnId') == payload['turnId'] for t in state_turns(state))):
+                break
+            time.sleep(0.05)
+    original = edit_target(state, payload['turnId'], payload['itemId'])
+    turns = state_turns(state)
+    if original != payload['originalText'] or not turns or turns[-1].get('turnId') != payload['expectedLastTurnId']:
+        raise RuntimeError('对话内容已变化，请刷新后重试')
+    params = {'conversationId': tid, 'turnId': payload['turnId'], 'message': message.strip(), 'allowEarlierMessages': True}
+    tier = (state.get('latestThreadSettings') or {}).get('serviceTier')
+    if isinstance(tier, str):
+        params['serviceTier'] = tier
+    try:
+        response = agent.ipc.request('thread-follower-edit-last-user-turn', params, version=2, target=target, timeout=60)
+    except RuntimeError as exc:
+        if str(exc) != 'Only the most recent message can be edited.':
+            raise
+        result = native_conversation_ui.call({**payload, 'operation': 'edit-history', 'threadId': tid})
+        return {'ok': True, 'transport': 'desktop-native-history', **result}
+    if response.get('result', {}).get('ok') is not True:
+        raise RuntimeError('桌面 App 没有确认编辑重发，请核对原 App；不会自动重试')
+    return {'ok': True, 'transport': 'desktop-ipc', 'historyReverted': True, 'messageSent': True, 'confirmedAt': time.time()}
+
 def native_capacity_retry(state, turns=None, observation=None):
     """Failed-capacity continuation, matching the App; never schedule a retry here."""
     turns = state_turns(state) if turns is None else turns
@@ -1143,7 +1202,7 @@ def view_state(state, revision, owner, asset_factory=None, turn_cache=None, capa
     sandbox_policy = latest_settings.get('sandboxPolicy') or current_permissions.get('sandboxPolicy') or {}
     full_access = profile_id == ':danger-full-access' or sandbox_policy.get('type') == 'dangerFullAccess'
     pending = public_pending_requests(state.get('requests', []), recent_items, state['id'])
-    return {'id': state['id'], 'title': state.get('title') or '未命名对话', 'cwd': state.get('cwd', ''), 'model': state.get('latestModel'), 'reasoningEffort': state.get('latestReasoningEffort'), 'serviceTier': latest_settings.get('serviceTier') or 'default', 'fullAccess': full_access, 'nativeMetadata': public_metadata({**state, 'activeTurn': latest_turn}), 'status': status, 'executionState': public_execution_state(state, turns, capacity_retry), 'source': 'desktop-live', 'owned': bool(owner) and status != 'notLoaded', 'canContinue': status == 'idle' and latest_turn.get('status') == 'interrupted' or bool(capacity_retry and capacity_retry['canContinue']), 'capacityRetry': capacity_retry, 'editableUserMessage': editable, 'revision': revision, 'updated': time.time(), 'items': recent_items, 'asyncQuestionState': {'pendingQuestionIds': [question['questionItemId'] for _, questions in pending_async_questions(state) for question in questions]}, 'totalItems': total_items, 'partialHistory': not history.get('isComplete', True) or len(recent_items) < total_items, 'pendingRequests': len(pending), 'requests': pending}
+    return {'id': state['id'], 'title': state.get('title') or '未命名对话', 'cwd': state.get('cwd', ''), 'model': state.get('latestModel'), 'reasoningEffort': state.get('latestReasoningEffort'), 'serviceTier': latest_settings.get('serviceTier') or 'default', 'fullAccess': full_access, 'nativeMetadata': public_metadata({**state, 'activeTurn': latest_turn}), 'status': status, 'executionState': public_execution_state(state, turns, capacity_retry), 'source': 'desktop-live', 'owned': bool(owner) and status != 'notLoaded', 'canContinue': status == 'idle' and latest_turn.get('status') == 'interrupted' or bool(capacity_retry and capacity_retry['canContinue']), 'capacityRetry': capacity_retry, 'editableUserMessage': editable, 'canEditHistory': bool(owner) and status not in ('active', 'notLoaded'), 'lastTurnId': latest_turn.get('turnId'), 'revision': revision, 'updated': time.time(), 'items': recent_items, 'asyncQuestionState': {'pendingQuestionIds': [question['questionItemId'] for _, questions in pending_async_questions(state) for question in questions]}, 'totalItems': total_items, 'partialHistory': not history.get('isComplete', True) or len(recent_items) < total_items, 'pendingRequests': len(pending), 'requests': pending}
 PENDING_REQUEST_METHODS = {'item/commandExecution/requestApproval', 'item/fileChange/requestApproval', 'item/permissions/requestApproval', 'item/tool/requestUserInput', 'mcpServer/elicitation/request', 'item/plan/requestImplementation'}
 
 def public_pending_requests(requests, items, thread_id):
@@ -3211,19 +3270,16 @@ class HostAgent:
                         raise ValueError('该模型不支持所选推理强度')
                 if not self.ipc or not self.ipc.connected:
                     raise RuntimeError('新建对话需要目标 Codex Desktop 在线')
+                if not project_id and ('fullAccess' in payload or 'serviceTier' in payload):
+                    return create_configured(self, payload, None, models.get(model), command.get('id'))
                 with self.native_creation_context(context_tid) as (native_call, caller_tid, creation_info):
                     native_project_id = project_id
                     if project_id:
                         selected_project = projects[project_id]
                         listed = app_tool_json(native_call('list_projects', {}, caller_tid))
-                        native_projects = [item for item in listed.get('projects', []) if item.get('projectKind') == 'local']
-                        roots = {os.path.normcase(os.path.realpath(root)) for root in selected_project.get('roots', []) if root}
-                        matches = [item for item in native_projects if item.get('path') and os.path.normcase(os.path.realpath(item['path'])) in roots]
-                        if not matches:
-                            matches = [item for item in native_projects if item.get('label') == selected_project.get('name')]
-                        if len(matches) != 1 or not matches[0].get('projectId'):
-                            raise RuntimeError('无法把网页项目对应到目标 Codex Desktop 项目')
-                        native_project_id = matches[0]['projectId']
+                        native_project_id = desktop_project_id(self.home, selected_project, local_projects(listed), projects.values())
+                    if 'fullAccess' in payload or 'serviceTier' in payload:
+                        return create_configured(self, payload, projects.get(project_id), models.get(model), command.get('id'))
                     target = {'type': 'project', 'projectId': native_project_id, 'environment': {'type': 'local'}} if project_id else {'type': 'projectless'}
                     arguments = {'prompt': prompt, 'target': target}
                     if model:
@@ -3298,10 +3354,33 @@ class HostAgent:
                 root = Path(raw_root).expanduser()
                 if not root.is_absolute() or not root.is_dir():
                     raise ValueError('项目目录必须是目标机上已存在的绝对路径')
-                result = self.appserver.request('project/create', {'idempotencyKey': command['id'], 'name': name, 'roots': [{'path': str(root.resolve())}], 'metadata': {'createdBy': 'codex-desktop-relay'}})
-                self.read_catalog()
-                project = result.get('project', {})
-                return {'ok': True, 'transport': 'codex-app-server', 'project': {'id': project.get('id'), 'name': project.get('name')}, 'confirmedAt': time.time()}
+                if not self.ipc or not self.ipc.connected:
+                    raise RuntimeError('创建项目需要目标 Codex Desktop 在线')
+                root = str(root.resolve())
+                with self.lock:
+                    context_tid = next((row['id'] for row in self.catalog if row['id'] == tid), '') or next((row['id'] for row in self.catalog), '')
+                with self.native_creation_context(context_tid) as (native_call, caller_tid, creation_info):
+                    created = app_tool_json(native_call('create_project', {'name': name, 'sources': [root], 'host': {'type': 'local'}}, caller_tid, timeout=60))
+                    desktop_id = created.get('projectId')
+                    if not isinstance(desktop_id, str) or not desktop_id:
+                        raise TimeoutError('原 App 的项目创建结果尚未确认，请先刷新核对，不要重复创建')
+                    confirmed = False
+                    warning = None
+                    try:
+                        listed = local_projects(app_tool_json(native_call('list_projects', {}, caller_tid)))
+                        confirmed = any((row['projectId'] == desktop_id and project_paths(row) == {path_key(root)} for row in listed))
+                        for delay in (0, 0.1, 0.25, 0.5, 0.9):
+                            if delay:
+                                time.sleep(delay)
+                            if desktop_id in project_id_map(self.home):
+                                break
+                        self.read_catalog()
+                    except (OSError, RuntimeError, TimeoutError) as exc:
+                        warning = str(exc)
+                    with self.lock:
+                        project = registered_backend_project(self.home, desktop_id, [root], self.projects)
+                    ready = confirmed and project is not None
+                return {'ok': True, 'transport': 'desktop-app-tools', 'project': {'id': project['id'] if ready else None, 'desktopId': desktop_id, 'name': name, 'roots': [root], 'ready': ready}, 'registrationPending': not ready, 'warning': None if ready else '项目已在原 App 登记，可用性尚未确认；请刷新后核对，不要重复创建' + ('：' + warning if warning else ''), 'creationContextCleanupWarning': creation_info['cleanupWarning'], 'confirmedAt': time.time()}
             elif action == 'project_update_roots':
                 project_id = str(payload.get('projectId', '')).strip()
                 with self.lock:
@@ -3384,6 +3463,18 @@ class HostAgent:
                         slot['state']['title'] = name
                         self.dirty.add(tid)
             elif action == 'fork_thread':
+                if 'environment' in payload:
+                    environment = payload['environment']
+                    if environment not in ('same-directory', 'worktree') or payload.get('lastTurnId'):
+                        raise ValueError('分支位置无效')
+                    native_call = self.call_macos_app_tool if sys.platform == 'darwin' else self.app_tools.call
+                    value = app_tool_json(native_call('fork_thread', {'threadId': tid, 'environment': {'type': environment}}, tid, timeout=60))
+                    fork_id = value.get('threadId')
+                    client_id = value.get('clientThreadId')
+                    if not fork_id and (not client_id):
+                        raise TimeoutError('原 App 已接收分支请求，但尚未确认结果；请勿重复创建')
+                    self.read_catalog()
+                    return {'ok': True, 'transport': 'desktop-app-tools', 'threadId': fork_id, 'clientThreadId': client_id, 'pending': not bool(fork_id), 'sourceThreadId': tid, 'title': '新分支对话'}
                 last_turn_id = str(payload.get('lastTurnId', '')).strip()
                 params = {'threadId': tid, 'excludeTurns': True}
                 if last_turn_id:
@@ -3551,6 +3642,8 @@ class HostAgent:
             if response.get('result', {}).get('ok') is False:
                 raise RuntimeError('桌面 App 没有接受继续任务')
             return {'ok': True, 'transport': 'desktop-ipc', 'method': response.get('method'), 'confirmedAt': time.time()}
+        if action == 'edit_user_turn':
+            return edit_history(self, tid, payload, target)
         if action == 'edit_last_user_turn':
             raw_message = payload.get('text')
             if not isinstance(raw_message, str):
@@ -3949,7 +4042,7 @@ class HostAgent:
                 with self.lock:
                     views = dict(list(self.last_sent.items())[:1])
                     pending_results = list(self.results.items())
-                    payload = {'host': self.cfg['host_id'], 'label': self.cfg['label'], 'desktopConnected': bool(self.ipc and self.ipc.connected), 'terminal': self.terminal_info, 'capabilities': {'queueResume': True, 'softwarePackages': ['codex']}, 'catalog': [row.copy() for row in self.catalog], 'projects': self.projects, 'models': self.models, 'views': views}
+                    payload = {'host': self.cfg['host_id'], 'label': self.cfg['label'], 'desktopConnected': bool(self.ipc and self.ipc.connected), 'terminal': self.terminal_info, 'capabilities': {'queueResume': True, 'nativeSidebar': True, 'editHistory': True, 'newThreadSettings': True, 'softwarePackages': ['codex']}, 'catalog': [row.copy() for row in self.catalog], 'projects': self.projects, 'models': self.models, 'views': views}
                 results = {}
                 result_bytes = 0
                 for cid, value in pending_results:
