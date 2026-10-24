@@ -10,6 +10,12 @@
   const body = dialog.querySelector('.native-body'), status = dialog.querySelector('.native-status');
   let target = null, section = 'tasks', epoch = 0, pending = false, readController = null;
   const readTimeoutMs = 15000;
+  const cache = new Map(), connections = new Map();
+  let generation = relayGeneration;
+  const cacheKey = (name, options) => JSON.stringify([target.host, currentHost()?.capabilities?.nativeReadCacheScope, target.thread, name, options]);
+  function clearHost(host) {
+    for (const [key, entry] of cache) if (entry.host === host) cache.delete(key);
+  }
   const element = (tag, value, className = '') => {
     const node = document.createElement(tag);
     if (value !== undefined) node.textContent = value;
@@ -42,6 +48,16 @@
     return applicationId(host) === 'codex' ? Object.keys(names) : [];
   }
   function syncCapabilities() {
+    if (generation !== relayGeneration) { generation = relayGeneration; cache.clear(); }
+    for (const host of catalog) {
+      const online = Boolean(host.online && host.desktopConnected !== false);
+      const signature = JSON.stringify([online, host.capabilities?.nativeReadCacheScope]);
+      if (!online || connections.has(host.id) && connections.get(host.id) !== signature) {
+        clearHost(host.id);
+        if (dialog.open && target?.host === host.id) { epoch++; readController?.abort(); dialog.close(); }
+      }
+      connections.set(host.id, signature);
+    }
     const allowed = supportedSections();
     for (const node of document.querySelectorAll('[data-native-section]')) node.hidden = !allowed.includes(node.dataset.nativeSection);
     for (const tab of dialog.querySelectorAll('.native-tabs button')) tab.hidden = !allowed.includes(tab.dataset.section);
@@ -57,10 +73,13 @@
   async function mutate(operation, payload = {}, action = 'native_action') {
     if (pending) return;
     pending = true; status.textContent = '正在由原 App 保存…';
+    epoch++; readController?.abort();
+    const origin = target && {...target};
+    if (origin) clearHost(origin.host);
     body.setAttribute('aria-busy', 'true');
     try {
       const result = await command(action, {...payload, ...(action === 'native_action' ? {operation} : {})});
-      await load(section);
+      if (dialog.open && valid() && target.host === origin.host && target.thread === origin.thread) await load(section, {}, true);
       if (result.warning) status.textContent = result.warning;
     } catch (error) { status.textContent = error.message; }
     finally { pending = false; body.removeAttribute('aria-busy'); }
@@ -307,32 +326,51 @@
     $('message').dispatchEvent(new Event('input', {bubbles: true}));
     if (dialog.open) dialog.close(); $('filePreviewDialog')?.close(); $('message').focus();
   }
-  async function load(name, options = {}) {
+  async function load(name, options = {}, refreshApp = false) {
     if (!supportedSections().includes(name)) return;
     section = name;
     const version = ++epoch;
     readController?.abort();
+    const key = cacheKey(name, options), remembered = cache.get(key);
+    const conditional = currentHost()?.capabilities?.nativeReadCache === true && name !== 'review';
+    const render = data => {
+      body.replaceChildren(button('刷新', () => load(name, options, true)));
+      ({tasks, permissions, tools, review, metadata})[name](data, options);
+    };
+    for (const tab of dialog.querySelectorAll('.native-tabs button')) tab.setAttribute('aria-selected', String(tab.dataset.section === name));
+    status.textContent = ''; body.removeAttribute('aria-busy');
+    if (conditional && remembered) {
+      render(remembered.data);
+      if (!refreshApp && remembered.expires > Date.now()) return;
+    } else {
+      body.replaceChildren(button('重新读取', () => void load(name, options, true)));
+    }
     const controller = new AbortController();
     readController = controller;
     let timedOut = false;
     const timer = setTimeout(() => { timedOut = true; controller.abort(); }, readTimeoutMs);
-    for (const tab of dialog.querySelectorAll('.native-tabs button')) tab.setAttribute('aria-selected', String(tab.dataset.section === name));
-    body.replaceChildren(); status.textContent = '正在读取目标 App…';
-    body.append(button('重新读取', () => void load(name, options)));
+    status.textContent = '正在读取目标 App…';
     body.setAttribute('aria-busy', 'true');
     try {
-      const data = await command('native_read', {operation: name, ...options}, {signal: controller.signal});
+      const result = await command('native_read', {operation: name, ...options,
+        ...(conditional ? {cache: true, refresh: refreshApp, ...(remembered ? {ifRevision: remembered.revision} : {})} : {})}, {signal: controller.signal});
       if (version !== epoch || !dialog.open) return;
       if (!valid()) {
         status.textContent = '当前对话已切换，请关闭后重新打开设置';
         return;
       }
       status.textContent = '';
-      body.replaceChildren();
-      const refresh = button('刷新', () => load(name, options)); body.append(refresh);
-      ({tasks, permissions, tools, review, metadata})[name](data, options);
+      if (result.notModified && !remembered) throw new Error('原 App 未确认操作');
+      const data = result.notModified ? remembered.data : result;
+      if (conditional && result.readCache?.revision && Number.isFinite(result.readCache.maxAgeMs)) {
+        cache.delete(key); cache.set(key, {host: target.host, data, revision: result.readCache.revision,
+          expires: Date.now() + Math.min(60000, Math.max(0, result.readCache.maxAgeMs))});
+        while (cache.size > 24) cache.delete(cache.keys().next().value);
+      } else cache.delete(key);
+      render(data);
     } catch (error) {
       if (version !== epoch || !dialog.open) return;
+      cache.delete(key);
       status.textContent = timedOut ? '读取超时（15 秒），请点击重新读取；不会自动重试。' : error.message;
     } finally {
       clearTimeout(timer);
@@ -388,6 +426,7 @@
   new MutationObserver(() => {
     if (!$('workspace').hidden) return;
     epoch++; target = null; readController?.abort(); readController = null;
+    cache.clear();
     if (dialog.open) dialog.close();
     body.replaceChildren(); body.removeAttribute('aria-busy'); status.textContent = '';
   }).observe($('workspace'), {attributes: true, attributeFilter: ['hidden']});

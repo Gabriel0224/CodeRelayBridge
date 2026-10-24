@@ -428,6 +428,7 @@ class Relay:
         self.removed_host_events = []
         self.secure_commands = {}
         self.lite_views = {}
+        self.live_output_demands = {}
         self.failures = {}
         self.setup_failures = {}
         self.ssh_terminals = SshTerminalManager(cfg)
@@ -458,6 +459,30 @@ class Relay:
     @staticmethod
     def lite_item_key(item):
         return f"{item.get('turnId', '')}/{item.get('id', '')}"
+
+    def live_output_demand(self, host, tid=None, wanted=None):
+        """Ephemeral foreground interest, independent of command/history storage."""
+        now = time.monotonic()
+        with self.lock:
+            demands = self.live_output_demands
+            for key, expiry in list(demands.items()):
+                state = self.hosts.get(key[0], {})
+                view = state.get('views', {}).get(key[1], {})
+                if expiry <= now or not state.get('capabilities', {}).get('nativeLiveOutput') or (not state.get('desktopConnected')) or (time.time() - state.get('seen', 0) >= HOST_ONLINE_TTL) or (not view.get('owned')) or (view.get('status') != 'active') or (not view.get('executionState', {}).get('activeCommandIds')):
+                    demands.pop(key, None)
+            if tid is not None and wanted is not None:
+                key = (host, tid)
+                demands.pop(key, None)
+                state = self.hosts.get(host, {})
+                view = state.get('views', {}).get(tid, {})
+                if wanted and state.get('capabilities', {}).get('nativeLiveOutput') is True and state.get('desktopConnected') and (time.time() - state.get('seen', 0) < HOST_ONLINE_TTL) and view.get('owned') and (view.get('source') == 'desktop-live') and (view.get('status') == 'active') and view.get('executionState', {}).get('activeCommandIds'):
+                    demands[key] = now + 8
+            keys = [key for key in demands if key[0] == host]
+            for key in keys[:-4]:
+                demands.pop(key, None)
+            while len(demands) > 128:
+                demands.pop(next(iter(demands)))
+            return [{'threadId': key[1], 'ttl': min(8, expiry - now)} for key, expiry in demands.items() if key[0] == host]
 
     def update_lite_view(self, host, tid, view):
         """Record a stable view and the smallest safe patch from its predecessor."""
@@ -1019,6 +1044,9 @@ def handler_factory(app):
                         result = app.lite_thread(host, tid, since)
                         result['generation'] = app.generation
                         result['online'] = bool(time.time() - h.get('seen', 0) < HOST_ONLINE_TTL and h.get('desktopConnected', False))
+                        demand = params.get('liveOutput', [''])[0]
+                        if self.command == 'GET' and demand in ('0', '1'):
+                            app.live_output_demand(host, tid, demand == '1')
                     return self.response(200, result, compress=True)
                 if path == '/api/command':
                     cid = params.get('id', [''])[0]
@@ -1263,7 +1291,10 @@ def handler_factory(app):
                 db.execute("DELETE FROM commands WHERE result IS NOT NULL AND ((action='fetch_asset' AND created<?) OR (action LIKE 'terminal_%' AND created<?) OR created<?)", (now - 3600, now - 600, now - 86400))
             if changed:
                 app.signal()
-            return self.response(200, {'generation': app.generation, 'commands': [dict(zip(('id', 'thread', 'action', 'text'), row)) for row in rows] + secure_rows})
+            response = {'generation': app.generation, 'commands': [dict(zip(('id', 'thread', 'action', 'text'), row)) for row in rows] + secure_rows}
+            if state.get('capabilities', {}).get('nativeLiveOutput') is True:
+                response['liveOutputDemand'] = app.live_output_demand(host)
+            return self.response(200, response)
 
         def client_control_sync(self, host, data, enrolled, supplied):
             control = data.get('clientControl')

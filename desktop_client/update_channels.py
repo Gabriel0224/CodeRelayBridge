@@ -17,18 +17,39 @@ class ChannelSettings:
         self.path = Path(directory or data_root('CodexRelayClient' if role == 'client' else 'CodexRelayServer')) / 'update-preferences.json'
 
     def load(self):
+        value = self.read().get('channel')
+        return value if value in CHANNELS else 'auto'
+
+    def read(self):
         try:
             data = json.loads(self.path.read_text(encoding='utf-8'))
-            value = data.get('channel') if isinstance(data, dict) else None
-            return value if value in CHANNELS else 'auto'
+            return data if isinstance(data, dict) else {}
         except (OSError, ValueError):
-            return 'auto'
+            return {}
 
     def save(self, channel):
         if channel not in CHANNELS:
             raise UpdateError('更新通道无效。')
         from desktop_client.connections import atomic_json
-        atomic_json(self.path, {'channel': channel})
+        data = self.read()
+        data['channel'] = channel
+        atomic_json(self.path, data)
+
+    def skip_version(self, repository, version):
+        version_tuple(version)
+        from desktop_client.connections import atomic_json
+        data = self.read()
+        data['skippedVersion'] = {'repository': repository, 'version': version}
+        atomic_json(self.path, data)
+
+    def is_skipped(self, repository, version):
+        saved = self.read().get('skippedVersion')
+        if not isinstance(saved, dict) or saved.get('repository') != repository:
+            return False
+        try:
+            return version_tuple(saved.get('version')) == version_tuple(version)
+        except UpdateError:
+            return False
 
 def check_gitee(updater):
     """Gitee mirrors the SAME signed repository identity, never a renamed payload."""
@@ -128,7 +149,7 @@ class ChannelUpdater:
         http = GitHubHTTP(self.tokens.get(channel, ''), timeout=8, channel=channel)
         return ReleaseUpdater(self.role, self.edition, http, self.current, channel=channel)
 
-    def check(self, channel='auto', *, cancelled=None):
+    def check(self, channel='auto', *, cancelled=None, probe=True):
         if channel not in CHANNELS:
             raise UpdateError('更新通道无效。')
         self.checked = {}
@@ -166,7 +187,7 @@ class ChannelUpdater:
         if any((value['package'] != first for value in eligible.values())):
             raise UpdateError('不同通道的同版本安装包不一致，拒绝自动更新。')
         measurements = {}
-        if channel == 'auto' and len(eligible) > 1:
+        if probe and channel == 'auto' and (len(eligible) > 1):
             with ThreadPoolExecutor(max_workers=2) as pool:
                 jobs = {pool.submit(measure, self.checked[key].http, value['assetUrl'], cancelled=cancelled): key for key, value in eligible.items()}
                 for future in as_completed(jobs):

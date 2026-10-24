@@ -1,7 +1,7 @@
-"""Explicit, cancellable signed updates shared by the two native roles."""
+"""Background discovery and explicit, cancellable updates for both native roles."""
 from threading import Event
-from PySide6.QtCore import QThreadPool, Signal
-from PySide6.QtWidgets import QHBoxLayout, QProgressBar, QVBoxLayout
+from PySide6.QtCore import QThreadPool, QTimer, Signal
+from PySide6.QtWidgets import QApplication, QHBoxLayout, QProgressBar, QVBoxLayout
 from desktop_client.app import Work
 from desktop_client.update_channels import ChannelSettings, ChannelUpdater
 from desktop_client.relay_updates import TokenStore, UpdateError, UpdateCancelled
@@ -11,6 +11,9 @@ class UpdateDialog(QDialog):
     installRequested = Signal(str)
     downloadProgress = Signal(object, object)
     stageChanged = Signal(str)
+    INITIAL_CHECK_MS = 20000
+    CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000
+    BUSY_RETRY_MS = 60000
 
     def __init__(self, parent, role='client', updater=None, settings=None):
         super().__init__(parent)
@@ -23,6 +26,9 @@ class UpdateDialog(QDialog):
         self.job = self.release = self.plan = None
         self.cancelled = Event()
         self.closing = False
+        self.background_request = False
+        self.background_timer = None
+        self.monitor_stopped = False
         layout = QVBoxLayout(self)
         self.info = QLabel('当前版本 ' + self.updater.current + '\n仓库：' + self.updater.repo)
         self.info.setWordWrap(True)
@@ -35,6 +41,9 @@ class UpdateDialog(QDialog):
         self.channel.setCurrentIndex(max(0, self.channel.findData(self.settings.load())))
         self.channel.currentIndexChanged.connect(self.channel_changed)
         row.addWidget(self.channel, 1)
+        self.check_button = QPushButton('检查更新')
+        self.check_button.clicked.connect(self.check)
+        row.addWidget(self.check_button)
         layout.addLayout(row)
         self.tokens = {}
         self.remember = {}
@@ -66,25 +75,26 @@ class UpdateDialog(QDialog):
         self.transfer = QLabel('')
         layout.addWidget(self.transfer)
         row = QHBoxLayout()
-        self.check_button = QPushButton('检查更新')
-        self.check_button.clicked.connect(self.check)
-        row.addWidget(self.check_button)
-        self.install_button = QPushButton('确认更新')
+        self.skip_button = QPushButton('跳过此版本')
+        self.skip_button.setToolTip('不再提醒此版本；以后有更新版本时仍会提醒。')
+        self.skip_button.setEnabled(False)
+        self.skip_button.clicked.connect(self.skip)
+        row.addWidget(self.skip_button)
+        row.addStretch(1)
+        self.cancel_button = QPushButton('取消')
+        self.cancel_button.setToolTip('本次关闭，下次检查到此版本时仍会提醒。')
+        self.cancel_button.clicked.connect(self.cancel)
+        row.addWidget(self.cancel_button)
+        self.install_button = QPushButton('升级')
         self.install_button.setEnabled(False)
         self.install_button.clicked.connect(self.install)
         row.addWidget(self.install_button)
-        self.cancel_button = QPushButton('取消')
-        self.cancel_button.clicked.connect(self.cancel)
-        row.addWidget(self.cancel_button)
         layout.addLayout(row)
         row = QHBoxLayout()
         self.forget_button = QPushButton('移除所选通道授权')
         self.forget_button.setVisible(self.updater.requires_auth)
         self.forget_button.clicked.connect(self.forget)
         row.addWidget(self.forget_button)
-        dismiss = QPushButton('关闭')
-        dismiss.clicked.connect(self.close)
-        row.addWidget(dismiss)
         layout.addLayout(row)
         note = QLabel('更新会短暂断开本机面板接入；配对、账号和历史保留。\n签名、哈希、系统和版本类型均校验通过后才替换。')
         note.setWordWrap(True)
@@ -93,6 +103,45 @@ class UpdateDialog(QDialog):
         self.stageChanged.connect(self.show_stage)
         self.auth_visibility()
         self.load_credentials()
+
+    def start_background_checks(self):
+        if self.background_timer is not None:
+            return
+        self.background_timer = QTimer(self)
+        self.background_timer.setSingleShot(True)
+        self.background_timer.timeout.connect(self.background_check)
+        QApplication.instance().aboutToQuit.connect(self.stop_background_checks)
+        self.background_timer.start(self.INITIAL_CHECK_MS)
+
+    def stop_background_checks(self):
+        self.monitor_stopped = True
+        if self.background_timer:
+            self.background_timer.stop()
+        if self.job:
+            self.cancelled.set()
+
+    def background_check(self):
+        parent = self.parentWidget()
+        if self.monitor_stopped or (parent and (getattr(parent, 'exiting', False) or getattr(parent, 'shutdown_mode', None))):
+            return
+        if self.job or self.isVisible() or (parent and (getattr(parent, 'busy', False) or getattr(parent, 'busy_key', None))):
+            self.background_timer.start(self.BUSY_RETRY_MS)
+            return
+        self.check(automatic=True)
+
+    def show_manual(self):
+        self.background_request = False
+        self.closing = False
+        self.show()
+        self.raise_()
+        self.activateWindow()
+
+    def clear_authorization(self):
+        self.updater.tokens.clear()
+        for source in self.updater.checked.values():
+            if hasattr(source.http, '_token'):
+                source.http._token = ''
+        self.updater.checked.clear()
 
     def load_credentials(self):
         """Only return presence, never place a stored secret into UI state."""
@@ -130,6 +179,7 @@ class UpdateDialog(QDialog):
     def channel_changed(self):
         self.release = None
         self.install_button.setEnabled(False)
+        self.skip_button.setEnabled(False)
         self.version_notice.setText('')
         self.auth_visibility()
         try:
@@ -150,9 +200,13 @@ class UpdateDialog(QDialog):
         self.enable(False)
         self.pool.start(self.job)
 
-    def check(self):
+    def check(self, checked=False, *, automatic=False):
         if self.job:
             return
+        self.background_request = automatic
+        self.closing = False
+        if self.background_timer:
+            self.background_timer.stop()
         self.release = None
         self.version_notice.setText('')
         self.transfer.setText('')
@@ -181,7 +235,7 @@ class UpdateDialog(QDialog):
                             warnings.append(str(error))
                     if token:
                         self.updater.tokens[provider] = token
-            result = self.updater.check(selected, cancelled=self.cancelled.is_set)
+            result = self.updater.check(selected, cancelled=self.cancelled.is_set, probe=not automatic)
             for provider in requested if self.updater.requires_auth else ():
                 if entered.get(provider) and remember[provider] and (provider in self.updater.checked):
                     if self.cancelled.is_set():
@@ -232,6 +286,7 @@ class UpdateDialog(QDialog):
 
     def cancel(self):
         if self.job:
+            self.closing = True
             self.cancelled.set()
             self.cancel_button.setEnabled(False)
             self.status.setText('正在取消，请等待当前网络或校验步骤结束…')
@@ -239,6 +294,21 @@ class UpdateDialog(QDialog):
             self.release = None
             self.install_button.setEnabled(False)
             self.status.setText('本次更新已取消；可稍后重新检查。')
+            self.close()
+
+    def skip(self):
+        if self.job or not self.release or (not self.release.get('available')):
+            return
+        try:
+            self.settings.skip_version(self.updater.repo, self.release['latest'])
+        except (OSError, UpdateError):
+            self.status.setText('无法保存跳过版本，请重试。')
+            return
+        self.release = None
+        self.close()
+
+    def reject(self):
+        self.cancel()
 
     def show_progress(self, received, total):
         if not self.cancelled.is_set():
@@ -256,6 +326,10 @@ class UpdateDialog(QDialog):
 
     def done(self, name, value):
         self.job = None
+        automatic = self.background_request and name == 'check'
+        if name == 'check' and self.background_timer and (not self.monitor_stopped):
+            self.background_timer.start(self.CHECK_INTERVAL_MS)
+        self.background_request = False
         self.enable(True)
         self.progress.hide()
         if self.cancelled.is_set():
@@ -279,6 +353,14 @@ class UpdateDialog(QDialog):
                 warnings.append('部分通道不可用，已使用可用通道。')
             if warnings:
                 self.status.setText(self.status.text() + '\n' + '\n'.join(warnings))
+            if automatic:
+                if value['available'] and (not self.settings.is_skipped(self.updater.repo, value['latest'])):
+                    self.show()
+                    self.raise_()
+                    self.activateWindow()
+                else:
+                    self.release = None
+                    self.clear_authorization()
         elif name == 'forget':
             self.show_credentials({provider: False for provider in self.requested_channels()})
             self.status.setText('已移除所选通道的本机更新授权。')
@@ -287,6 +369,7 @@ class UpdateDialog(QDialog):
             self.status.setText('校验通过，正在请求本机 Relay 完全退出并更新…')
             self.installRequested.emit(value)
         self.install_button.setEnabled(bool(self.release and self.release.get('available')))
+        self.skip_button.setEnabled(self.install_button.isEnabled())
         if self.closing:
             self.close()
 
@@ -295,12 +378,18 @@ class UpdateDialog(QDialog):
             field.setEnabled(enabled)
         self.cancel_button.setEnabled(True)
         self.install_button.setEnabled(enabled and bool(self.release and self.release.get('available')))
+        self.skip_button.setEnabled(self.install_button.isEnabled())
 
     def failed(self, name, message):
         self.job = None
         self.enable(True)
         self.progress.hide()
         self.status.setText('更新已取消，原程序未改变。' if self.cancelled.is_set() else message)
+        if name == 'check':
+            self.background_request = False
+            if self.background_timer and (not self.monitor_stopped):
+                self.background_timer.start(self.CHECK_INTERVAL_MS)
+            self.clear_authorization()
         if self.closing:
             self.close()
 
@@ -310,11 +399,10 @@ class UpdateDialog(QDialog):
             self.cancel()
             event.ignore()
         else:
-            self.updater.tokens.clear()
-            for source in self.updater.checked.values():
-                if hasattr(source.http, '_token'):
-                    source.http._token = ''
-            self.updater.checked.clear()
+            self.clear_authorization()
+            self.release = None
+            self.install_button.setEnabled(False)
+            self.skip_button.setEnabled(False)
             for field in self.tokens.values():
                 field.clear()
             event.accept()

@@ -270,7 +270,9 @@ def extract_package(archive, work, role):
             raise UpdateError('当前系统不支持这种更新包格式。')
         from crb.common.deb_archive import extract_payload
         try:
-            return extract_payload(archive, work / 'extracted' / product, role)
+            root = work / 'extracted'
+            root.mkdir(mode=448, exist_ok=False)
+            return extract_payload(archive, root / product, role)
         except (OSError, ValueError, tarfile.TarError):
             raise UpdateError('更新包路径越界。') from None
     if str(archive).endswith('.exe'):

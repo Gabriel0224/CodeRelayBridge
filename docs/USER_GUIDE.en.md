@@ -49,7 +49,7 @@ Clients normally initiate outbound connections to the server. Do not expose clie
 
 Choose your operating system and role at [GitHub Releases](https://github.com/Gabriel0224/CodeRelayBridge/releases). Standard packages are public; Cockpit integrated packages are not distributed in this public repository. Client and server packages are different applications.
 
-- **Windows x64:** run the matching `*-Setup.exe` and complete the per-user installation. Open the client or server from the Start menu. To uninstall, open `Uninstall.exe` beside the main executable, or use Windows Installed apps. Quit the corresponding Relay and stop its service before upgrading or uninstalling; Codex and DeepSeek may stay open. Do not move individual EXE or DLL files.
+- **Windows x64:** run the matching `*-Setup.exe`, choose a dedicated application folder, and complete the per-user installation. Reinstallation defaults to the previous directory; uninstall first to change locations. Pairing, settings and history are retained. Open the client or server from the Start menu. To uninstall, open `Uninstall.exe` beside the main executable, or use Windows Installed apps. Quit the corresponding Relay and stop its service before upgrading or uninstalling; Codex and DeepSeek may stay open. Do not move individual EXE or DLL files.
 - **Ubuntu / Mint (Linux x64):** download the matching `.deb`, run `sudo apt install --reinstall ./PACKAGE.deb` to resolve declared system dependencies, then open it from the desktop application menu. The package manager owns `/opt/coderelaybridge/`; personal settings and pairing stay in your user directory. Never run the desktop UI with sudo. Quit a previous portable Relay before migration; use the server UI's existing service takeover option for an old configured service.
 - **macOS Apple Silicon:** open the DMG and copy `Relay Server.app` / `Relay Client.app` to your applications directory. Current packages require **macOS 27 or later** and do not support Intel Macs. Check the selected Release's requirements.
 
@@ -207,15 +207,23 @@ CRB cannot fix unauthorized members, missing Managed IPv4 addresses, the wrong N
 
 ## 9. Updates, backups and troubleshooting
 
+### Sections and native settings
+
+Below the filters, **Sections & order** is on the left and **New chat** is on the right. Opening either sections or native settings reuses recently read content first. The client keeps a short memory cache on demand: sections and scheduled tasks for 30 seconds, permissions for 15 seconds, skills and tools for 60 seconds, and context/timing for 5 seconds. Review diffs remain live reads. Expired views validate when opened again; unchanged content returns a small confirmation instead of the full inventory. No background polling is added.
+
+Saving in the panel reads back the confirmed state. After editing in the original App, use **Refresh from App** in sections or **Refresh** in settings to read immediately. Results are isolated across computers, conversations, App sign-ins and reconnections; quitting the client clears its memory cache. This requires a client supporting the cache protocol. Older clients retain their existing read behavior.
+
 ### Updating
 
-1. Click **Check for CRB updates** in the client or server UI.
+Clients and servers check for stable releases in the background about 20 seconds after startup, then every six hours while the manager is running or in the system tray. Background checks read version metadata and signed manifests, without downloading full installers or running speed tests. Network failures wait quietly until the next check. A new version opens the existing update page automatically.
+
+1. Use the automatic notification, or click **Check for CRB updates** in the client or server UI.
 2. Select **Automatic (limited speed test)**, **GitHub**, or **Gitee**. Your choice is saved; manual mode contacts only that channel.
 3. Click **Check for updates**. The window shows either **You are up to date** or the new version and download channel. Automatic mode first chooses the newest signed version, then tests matching mirrors, reading at most 256 KiB per channel. It does not run background speed tests.
-4. Select **Confirm update** and confirm the Relay restart, or **Cancel** to keep your installation. Checks and downloads can also be cancelled after the current network or verification step finishes.
+4. Select **Skip this version** to suppress reminders for that version while keeping reminders for newer releases; **Cancel** closes the page for now and allows another reminder at the next check; **Upgrade** confirms the Relay restart and starts downloading. A manual check still allows installation of a skipped version. Cancel, Escape, and closing the window also stop checks or downloads after the current network or verification step finishes.
 5. Watch the download percentage and transferred size, followed by verification and preparation stages. Signature, size, SHA-256, platform, role, and edition must all match before replacement. Relay connections and panel terminals disconnect briefly; original model App tasks are not stopped.
 
-Older installations without this button need a first manual full-package upgrade. Preserve user data rather than re-enrolling or deleting configuration. Standard updates need no token. Private updates require a repository-read token for the selected provider; GitHub and Gitee tokens are not interchangeable. Use a token for this session only or opt in to system-keychain storage. Automatic mode can use one available channel and fall back on network failure only to an identical signed installer. Signature, hash, or identity errors stop the update.
+Older installations without this button need a first manual full-package upgrade. Preserve user data rather than re-enrolling or deleting configuration. Standard updates need no token. Private updates require a repository-read token for the selected provider; GitHub and Gitee tokens are not interchangeable. Use a token for this session only or save it in the system keychain for future background checks. Automatic mode can use one available channel and fall back on network failure only to an identical signed installer. Signature, hash, or identity errors stop the update.
 
 ### Backups
 

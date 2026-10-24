@@ -2,27 +2,37 @@
 (async request => {
   if (location.protocol !== 'app:' || location.host !== '-' || location.pathname !== '/index.html') throw Error('Original App required');
   const contracts = {
-    linux: ['app-shared-f2257985f1b6.js', 'be5fbb46d2d4b3fea9e7a4fc7385032e1e3f26d32d4e5cf9ce3fd51617baed5d', 'Zyt', 'LP', 'UP']
+    linux: [
+      ['app-shared-f2257985f1b6.js', 'be5fbb46d2d4b3fea9e7a4fc7385032e1e3f26d32d4e5cf9ce3fd51617baed5d', 'Zyt', 'LP', 'UP', 'vA'],
+      ['app-shared-6fc3d63f0486.js', 'e24dc1a9e516fb12b36edfe2ae984185ca1238787fcc19938501a097b1acd06c', null, null, null, 'DN']
+    ]
   };
-  const c = contracts[request.platform]; if (!c) throw Error('此原 App 版本尚未提供可核验的分支映射通道，请在原 App 查看结果');
-  const url = '/assets/' + c[0];
-  const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 1500);
-  let bytes;
-  try {
-    const response = await fetch(url, {cache: 'no-store', signal: controller.signal}); if (!response.ok) throw Error('Native asset unavailable');
-    bytes = await response.arrayBuffer();
-  } finally { clearTimeout(timer); } if (bytes.byteLength > 16000000) throw Error('Native asset too large');
-  const hash = [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map(v => v.toString(16).padStart(2, '0')).join('');
-  if (hash !== c[1]) throw Error('原 App 版本已变化，请先更新适配');
-  const native = await import(url), mapping = native[c[2]], reorder = native[c[3]], model = native[c[4]];
-  if (!mapping?.scope || !model?.scope || typeof reorder !== 'function') throw Error('Native sidebar contract changed');
+  const candidates = contracts[request.platform]; if (!candidates) throw Error('此原 App 版本尚未提供可核验的分支映射通道，请在原 App 查看结果');
+  let c, url;
+  for (const candidate of candidates) {
+    const assetUrl = '/assets/' + candidate[0];
+    const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 1500);
+    let bytes;
+    try {
+      const response = await fetch(assetUrl, {cache: 'no-store', signal: controller.signal}); if (!response.ok) continue;
+      bytes = await response.arrayBuffer();
+    } finally { clearTimeout(timer); }
+    if (bytes.byteLength > 16000000) throw Error('Native asset too large');
+    const hash = [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map(v => v.toString(16).padStart(2, '0')).join('');
+    if (hash !== candidate[1]) throw Error('原 App 版本已变化，请先更新适配');
+    c = candidate; url = assetUrl; break;
+  }
+  if (!c) throw Error('Native asset unavailable');
+  const native = await import(url), mapping = c[2] && native[c[2]], reorder = c[3] && native[c[3]], model = c[4] && native[c[4]];
+  const anchor = mapping || native[c[5]], sidebar = Boolean(mapping?.scope && model?.scope && typeof reorder === 'function');
+  if (!anchor?.scope || c[2] && !sidebar) throw Error('Native sidebar contract changed');
   let scope = null, visits = 0;
   function find(fiber) {
     if (!fiber || scope || visits++ > 30000) return;
     let hook = fiber.memoizedState, count = 0;
     while (hook && count++ < 300) {
       const value = hook.memoizedState?.current;
-      if (value?.scope === mapping.scope && value.node && value.chain && typeof value.get === 'function' && typeof value.watch === 'function') { scope = value; break; }
+      if (value?.scope === anchor.scope && value.node && value.chain && typeof value.get === 'function' && typeof value.watch === 'function') { scope = value; break; }
       hook = hook.next;
     }
     find(fiber.child); find(fiber.sibling);
@@ -30,17 +40,46 @@
   find(window.__codexRoot?._internalRoot?.current); if (!scope) throw Error('Native sidebar scope unavailable');
   if (request.operation === 'capabilities') {
     let manager = null;
-    try { if (native.vA?.scope) manager = scope.get(native.vA, 'local'); } catch (_) {}
-    return {status: 'ok', mixedOrdering: true, forkMapping: true,
-      historyEdit: Boolean(manager && ['getConversation', 'getCompleteConversationTurns', 'sendRequest',
+    try { if (native[c[5]]?.scope) manager = scope.get(native[c[5]], 'local'); } catch (_) {}
+    return {status: 'ok', mixedOrdering: sidebar, forkMapping: sidebar,
+      liveOutput: Boolean(manager && typeof manager.getConversation === 'function' && typeof manager.getStreamRole === 'function'),
+      historyEdit: Boolean(manager && ['getConversation', 'getCompleteConversationTurns', 'getStreamRole', 'waitForPendingThreadSettingsUpdate', 'sendRequest',
         'applyRevertResponseToConversation', 'startTurn'].every(key => typeof manager[key] === 'function'))};
+  }
+  if (request.operation === 'live-output') {
+    const targets = request.targets;
+    if (!Array.isArray(targets) || !targets.length || targets.length > 2 || targets.some(t =>
+      !t || ['threadId', 'turnId'].some(k => typeof t[k] !== 'string' || !t[k] || t[k].length > 200) ||
+      !Array.isArray(t.itemIds) || !t.itemIds.length || t.itemIds.length > 4 ||
+      t.itemIds.some(id => typeof id !== 'string' || !id || id.length > 200))) throw Error('Invalid live output scope');
+    const manager = scope.get(native[c[5]], 'local');
+    const rows = targets.map(target => {
+      if (manager.getStreamRole(target.threadId)?.role !== 'owner') return {...target, available: false, items: []};
+      const state = manager.getConversation(target.threadId), history = state?.turnHistory?.history;
+      const turns = history ? history.islands.flatMap(island => island.entries.map(entry =>
+        history.entitiesByKey[entry.value ?? entry.key])).filter(Boolean) : state?.turns || [];
+      const turn = turns.at(-1);
+      if (turn?.turnId !== target.turnId) return {...target, available: false, items: []};
+      const items = (turn.items || []).filter(item => item.type === 'commandExecution' && target.itemIds.includes(item.id)).map(item => {
+        let output = typeof item.aggregatedOutput === 'string' ? item.aggregatedOutput : '';
+        const bytes = new TextEncoder().encode(output);
+        if (bytes.length > 65536) {
+          let start = bytes.length - 65536;
+          while (start < bytes.length && (bytes[start] & 192) === 128) start++;
+          output = '[output truncated]\n' + new TextDecoder().decode(bytes.subarray(start));
+        }
+        return {id: item.id, output};
+      });
+      return {threadId: target.threadId, turnId: target.turnId, available: true, items};
+    });
+    return {status: 'ok', targets: rows};
   }
   if (request.operation === 'edit-history') {
     if (typeof request.threadId !== 'string' || !request.threadId ||
         ['turnId', 'itemId', 'expectedLastTurnId'].some(k => typeof request[k] !== 'string' || !request[k] || request[k].length > 200) ||
         typeof request.text !== 'string' || !request.text.trim() || request.text.trim().length > 32000 ||
         typeof request.originalText !== 'string') throw Error('Invalid native edit identity');
-    const manager = scope.get(native.vA, 'local');
+    const manager = scope.get(native[c[5]], 'local');
     if (!manager || ['getConversation', 'getCompleteConversationTurns', 'getStreamRole',
       'waitForPendingThreadSettingsUpdate', 'sendRequest', 'applyRevertResponseToConversation', 'startTurn']
       .some(k => typeof manager[k] !== 'function')) throw Error('Native history contract changed');
@@ -85,6 +124,7 @@
         warning: String(error.message || error)};
     }
   }
+  if (!sidebar) throw Error('此原 App 版本尚未提供可核验的分区排序或分支映射通道，请在原 App 查看结果');
   if (request.operation === 'fork-status') {
     if (typeof request.clientThreadId !== 'string' || !request.clientThreadId.startsWith('client-new-thread:') || request.clientThreadId.length > 200) throw Error('Invalid native creation identity');
     const read = get => {

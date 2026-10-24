@@ -14,7 +14,7 @@ from desktop_client.edition import edition_label
 
 class ServerWindow(QMainWindow):
 
-    def __init__(self, manager=None):
+    def __init__(self, manager=None, background_updates=True):
         super().__init__()
         self.manager = manager or ServerManager()
         self.preferences = Preferences(self.manager.root)
@@ -111,6 +111,8 @@ class ServerWindow(QMainWindow):
         self.timer.timeout.connect(self.refresh)
         self.timer.start(5000)
         QTimer.singleShot(0, self.refresh)
+        if background_updates:
+            self.relay_update_dialog().start_background_checks()
 
     def setup_page(self):
         page = QWidget()
@@ -314,13 +316,16 @@ class ServerWindow(QMainWindow):
     def refresh(self):
         self.submit('status', self.manager.status)
 
-    def open_relay_update(self):
+    def relay_update_dialog(self):
         from desktop_client.update_ui import UpdateDialog
+        from desktop_client.update_channels import ChannelSettings
         if not self.update_dialog:
-            self.update_dialog = UpdateDialog(self, 'server')
+            self.update_dialog = UpdateDialog(self, 'server', settings=ChannelSettings('server', self.manager.root))
             self.update_dialog.installRequested.connect(self.apply_relay_update)
-        self.update_dialog.show()
-        self.update_dialog.raise_()
+        return self.update_dialog
+
+    def open_relay_update(self):
+        self.relay_update_dialog().show_manual()
 
     def apply_relay_update(self, plan_file):
         if self.busy:

@@ -112,6 +112,8 @@ class CodexQuestionUI:
 
     @staticmethod
     def pending_key(request):
+        if request.get('operation') == 'retire-question-for-message':
+            return (request['threadId'], 'message:' + request['clientUserMessageId'], ())
         return (request['threadId'], request['turnId'], tuple(sorted((reply['questionItemId'] for reply in request['replies']))))
 
     def capacity_retry_state(self, thread_id, turn_id):
@@ -198,6 +200,44 @@ class CodexQuestionUI:
         self.notify_native_change(thread_id)
         return {'status': 'pending-cleanup', 'answerDelivered': True}
 
+    def defer_retire(self, thread_id, message_id, groups):
+        if not isinstance(message_id, str) or not 0 < len(message_id) <= 200 or (not isinstance(groups, list)) or (not 1 <= len(groups) <= 16):
+            raise ValueError('Invalid question retirement scope')
+        clean = []
+        for group in groups:
+            ids = group.get('questionIds') if isinstance(group, dict) else None
+            if not isinstance(ids, list) or not 1 <= len(ids) <= 8:
+                raise ValueError('Invalid question retirement identity')
+            validate_ack(thread_id, group.get('turnId'), [{'questionItemId': value, 'answer': 'validate-only'} for value in ids])
+            clean.append({'turnId': group['turnId'], 'questionIds': list(ids)})
+        request = {'operation': 'retire-question-for-message', 'platform': sys.platform, 'hostId': 'local', 'threadId': thread_id, 'clientUserMessageId': message_id, 'groups': clean}
+        key = self.pending_key(request)
+        with self.pending_lock:
+            previous = self.pending.get(key)
+            self.pending[key] = (request, previous[1] if previous else time.monotonic() + 600)
+            while len(self.pending) > 16:
+                self.pending.pop(next(iter(self.pending)))
+        self.notify_native_change(thread_id)
+        return {'status': 'pending-cleanup', 'reason': 'new-turn'}
+
+    def retire_for_message(self, request):
+        with self.lock:
+            if time.monotonic() < self.retry_after:
+                return {'status': 'unavailable'}
+            try:
+                endpoint = discover_debugger()
+                if not endpoint or not verify_debugger(endpoint):
+                    self.retry_after = time.monotonic() + 20
+                    return {'status': 'unavailable'}
+                result = self._call(endpoint, request)
+                if result.get('status') != 'awaiting-native-acceptance':
+                    with self.pending_lock:
+                        self.pending.pop(self.pending_key(request), None)
+                return result
+            except Exception:
+                self.retry_after = time.monotonic() + 20
+                return {'status': 'unavailable'}
+
     def notify_native_change(self, thread_id):
         """Finish delayed steering admission on existing native events only.
 
@@ -226,7 +266,7 @@ class CodexQuestionUI:
                         pending = [(key, value[0]) for key, value in self.pending.items() if key[0] == tid and value[1] > time.monotonic()]
                     for key, request in pending:
                         tid, turn = key[:2]
-                        result = self.acknowledge(tid, turn, request['replies'])
+                        result = self.retire_for_message(request) if request.get('operation') == 'retire-question-for-message' else self.acknowledge(tid, turn, request['replies'])
             except Exception:
                 with self.pending_lock:
                     self.pending_busy = False
@@ -262,11 +302,11 @@ class CodexQuestionUI:
                 if message.get('error') or result.get('exceptionDetails'):
                     raise RuntimeError('Native question UI acknowledgement failed')
                 value = result.get('result', {}).get('value')
-                if not isinstance(value, dict) or value.get('status') not in (statuses or {'closed', 'not-open', 'different-question-preserved', 'new-draft-preserved', 'unanswered-preserved', 'awaiting-native-acceptance', 'capacity-observed', 'capacity-not-rendered', 'queue-resumed', 'queue-not-paused', 'queue-resume-pending', 'question-closed', 'question-skipped', 'question-opened', 'question-not-open'}):
+                if not isinstance(value, dict) or value.get('status') not in (statuses or {'closed', 'not-open', 'different-question-preserved', 'new-draft-preserved', 'unanswered-preserved', 'awaiting-native-acceptance', 'capacity-observed', 'capacity-not-rendered', 'queue-resumed', 'queue-not-paused', 'queue-resume-pending', 'question-closed', 'question-skipped', 'question-opened', 'question-not-open', 'question-retired'}):
                     raise RuntimeError('Invalid acknowledgement result')
                 if program is not None:
                     return value
-                return value if request.get('operation') in ('capacity-retry-state', 'resume-interrupted-queue', 'question-control') else {**value, 'answerDelivered': True}
+                return value if request.get('operation') in ('capacity-retry-state', 'resume-interrupted-queue', 'question-control', 'retire-question-for-message') else {**value, 'answerDelivered': True}
             raise TimeoutError('Native UI acknowledgement timed out')
         finally:
             socket.close()

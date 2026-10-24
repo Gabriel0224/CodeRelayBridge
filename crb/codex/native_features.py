@@ -10,9 +10,17 @@ import sys
 import tomllib
 from crb.codex.native_sidebar import NativeSidebar
 from crb.codex.sidebar_ui import fork_status
+from crb.common.live_view_cache import NativeReadCache, NATIVE_READ_TTLS
 
 def digest(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False, default=str).encode()).hexdigest()
+
+def file_signature(path):
+    try:
+        stat = path.stat()
+        return (stat.st_mtime_ns, stat.st_size)
+    except OSError:
+        return None
 
 def text(value, limit=4000):
     return str(value or '')[:limit]
@@ -110,6 +118,30 @@ class NativeFeatures:
 
     def __init__(self, agent):
         self.agent = agent
+
+    def cache(self):
+        with self.agent.lock:
+            cache = getattr(self.agent, 'native_feature_cache', None)
+            if not isinstance(cache, NativeReadCache):
+                cache = self.agent.native_feature_cache = NativeReadCache()
+            return cache
+
+    def cache_key(self, tid, operation, payload):
+        with self.agent.lock:
+            scope = [self.cache_scope(), file_signature(self.agent.home / 'config.toml')]
+            if operation == 'sidebar':
+                hint = [self.agent.projects, sorted((row['id'] for row in self.agent.catalog)), file_signature(self.agent.home / '.codex-global-state.json')]
+            else:
+                native = self.agent.states.get(tid, {}).get('state', {})
+                hint = [native.get('cwd'), native.get('latestThreadSettings'), native.get('currentPermissions')]
+                if operation == 'metadata':
+                    hint += [native.get('tokenUsage'), native.get('latestTokenUsage'), file_signature(Path(self.agent.paths[tid])) if tid in self.agent.paths else None]
+            options = {key: value for key, value in payload.items() if key not in ('cache', 'refresh', 'ifRevision')}
+            return digest([scope, tid, operation, options, hint])
+
+    def cache_scope(self):
+        ipc = getattr(self.agent, 'ipc', None)
+        return digest([str(self.agent.home), str(getattr(self.agent, 'native_identity_key', '')), id(ipc), id(getattr(ipc, 'sock', None)), id(self.agent.appserver), file_signature(self.agent.home / 'auth.json')])[:24]
 
     def rpc(self, method, params):
         if not self.agent.appserver:
@@ -275,6 +307,25 @@ class NativeFeatures:
                 process.stdout.close()
 
     def execute(self, action, tid, payload):
+        operation = payload.get('operation')
+        cache = self.cache()
+        if action == 'native_read' and payload.get('cache') is True and (operation in NATIVE_READ_TTLS):
+            if operation == 'sidebar':
+                if not self.agent.ipc or not self.agent.ipc.connected:
+                    cache.invalidate()
+                    raise RuntimeError('请先连接目标 Codex Desktop')
+            else:
+                self.context(tid)
+            return cache.read(self.cache_key(tid, operation, payload), payload, lambda: self._execute(action, tid, payload), NATIVE_READ_TTLS[operation])
+        if action == 'native_action' or operation == 'refresh_thread':
+            cache.invalidate()
+            try:
+                return self._execute(action, tid, payload)
+            finally:
+                cache.invalidate()
+        return self._execute(action, tid, payload)
+
+    def _execute(self, action, tid, payload):
         operation = payload.get('operation')
         if action == 'native_read' and operation == 'fork_status':
             return fork_status(self.agent, tid, payload)

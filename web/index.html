@@ -48,10 +48,6 @@
       <button id="logout" class="secondary sidebar-utility-button" type="button" title="退出工作台登录"><svg class="sidebar-utility-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 4H4v16h5M9 12h11m-4-4 4 4-4 4"/></svg><span>退出</span></button>
     </div>
 
-    <button id="newThread" class="new-thread-button" type="button">
-      <span aria-hidden="true">＋</span><span>新对话</span>
-    </button>
-
     <div class="sidebar-controls">
       <label class="control-label" for="application">应用</label>
       <select id="application" aria-label="选择应用"></select>
@@ -70,6 +66,12 @@
         <option value="archived">已归档</option>
         <option value="all">全部会话</option>
       </select>
+    </div>
+
+    <div class="sidebar-primary-actions">
+      <button id="newThread" class="sidebar-action-button new-thread-button" type="button">
+        <span aria-hidden="true">＋</span><span>新对话</span>
+      </button>
     </div>
 
     <label class="search"><span>⌕</span><input id="search" placeholder="搜索对话或项目" autocomplete="off"></label>

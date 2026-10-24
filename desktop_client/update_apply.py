@@ -29,7 +29,10 @@ def update_targets(executable, role):
     managed = installed_executable(root, 'RelayClient' if role == 'client' else 'RelayServer')
     if managed.is_file():
         installed = package_root(managed)
-        if installed.is_symlink() or not installed.resolve().is_relative_to(root.resolve()):
+        from desktop_client.platform_support import windows_install_directory
+        registered = windows_install_directory(role)
+        custom_windows = registered is not None and installed.resolve() == registered.resolve()
+        if installed.is_symlink() or (not custom_windows and (not installed.resolve().is_relative_to(root.resolve()))):
             raise UpdateError('已安装程序路径身份异常。')
         installed = installed.resolve()
         if installed not in targets:

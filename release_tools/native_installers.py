@@ -21,11 +21,11 @@ def windows_uninstaller(directory, compiler=None):
     machine = subprocess.run([str(compiler), '-dumpmachine'], check=True, capture_output=True, text=True, timeout=15).stdout.strip()
     if machine != 'x86_64-w64-mingw32':
         raise RuntimeError('The uninstall launcher requires the native Windows x64 target')
-    subprocess.run([str(compiler), '-Os', '-s', '-mwindows', '-nostdlib', '-fno-stack-protector', '-fno-ident', '-Werror', '-Wl,--entry=entry,--no-insert-timestamp,--dynamicbase,--nxcompat,--high-entropy-va', str(Path(__file__).with_name('windows_uninstall.c')), '-o', str(target), '-lkernel32', '-luser32'], check=True, capture_output=True, timeout=60)
+    subprocess.run([str(compiler), '-Os', '-s', '-mwindows', '-nostdlib', '-fno-stack-protector', '-fno-ident', '-Werror', '-Wl,--entry=entry,--no-insert-timestamp,--dynamicbase,--nxcompat,--high-entropy-va', str(Path(__file__).with_name('windows_uninstall.c')), '-o', str(target), '-lkernel32', '-luser32', '-ladvapi32'], check=True, capture_output=True, timeout=60)
     import pefile
     binary = pefile.PE(str(target))
     dependencies = {entry.dll.decode('ascii').lower() for entry in binary.DIRECTORY_ENTRY_IMPORT}
-    valid = binary.FILE_HEADER.Machine == 34404 and binary.OPTIONAL_HEADER.Subsystem == 2 and (dependencies <= {'kernel32.dll', 'user32.dll'})
+    valid = binary.FILE_HEADER.Machine == 34404 and binary.OPTIONAL_HEADER.Subsystem == 2 and (dependencies <= {'kernel32.dll', 'user32.dll', 'advapi32.dll'})
     binary.close()
     if not valid:
         raise RuntimeError('The uninstall launcher is not a standalone native GUI executable')

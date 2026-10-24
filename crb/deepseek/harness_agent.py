@@ -22,6 +22,7 @@ import time
 import urllib.request
 import uuid
 from crb.deepseek.harness_client import HarnessClient, HarnessError
+from crb.common.live_view_cache import NativeReadCache, NATIVE_READ_TTLS
 APP_ID = 'deepseek'
 MAX_UPLOAD = 16 * 1024 * 1024
 ACTIONS = {'watch', 'attach_thread', 'mark_read', 'send', 'steer', 'stop_turn', 'new_thread', 'rename_thread', 'fork_thread', 'archive', 'unarchive', 'project_create', 'project_rename', 'project_delete', 'update_settings', 'load_older', 'queue_edit', 'queue_delete', 'queue_send_now', 'upload_asset_chunk', 'attach_local_file', 'resolve_request', 'fetch_asset', 'native_read', 'update_permissions', 'native_action'}
@@ -309,6 +310,8 @@ class HarnessAgent:
         self.approvals = {}
         self.assets = {}
         self.connected, self.generation = (False, None)
+        self.native_feature_cache = NativeReadCache()
+        self.native_cache_connection = 0
         self.commands = queue.Queue()
         self.inflight = set()
         with self.db() as db:
@@ -368,6 +371,9 @@ class HarnessAgent:
                     self.dirty.add(sid)
             self.catalog = catalog
             self.projects = [{'id': w['workspaceId'], 'name': w['title'], 'path': w['path'], 'roots': [w['path']], 'threadCount': len(w['sessionIds'])} for w in self.workspace['items']]
+            if not self.connected:
+                self.native_cache_connection += 1
+                self.native_feature_cache.invalidate()
             self.connected = True
 
     def global_stream(self, endpoint):
@@ -572,6 +578,25 @@ class HarnessAgent:
         return {'uploadId': upload, 'name': name, 'mime': p.get('mime', ''), 'size': size}
 
     def execute(self, command):
+        action = command['action']
+        payload = json.loads(command.get('text') or '{}') if action == 'native_read' else {}
+        operation = payload.get('operation')
+        if action == 'native_read' and payload.get('cache') is True and (operation in ('permissions', 'tools', 'metadata')):
+            sid = command['thread']
+            with self.lock:
+                if not any((row['id'] == sid for row in self.catalog)):
+                    raise ValueError('没有找到目标对话')
+                key = (id(self.client), self.generation, self.native_cache_connection, self.connected, sid, operation)
+            return self.native_feature_cache.read(key, payload, lambda: self._execute(command), NATIVE_READ_TTLS[operation])
+        if action in ('native_action', 'update_permissions', 'update_settings') or operation == 'refresh_thread':
+            self.native_feature_cache.invalidate()
+            try:
+                return self._execute(command)
+            finally:
+                self.native_feature_cache.invalidate()
+        return self._execute(command)
+
+    def _execute(self, command):
         action, sid, cid = (command['action'], command['thread'], command['id'])
         text = command.get('text', '')
         p = json.loads(text) if text and action not in ('send', 'steer') else {}
@@ -925,7 +950,7 @@ class HarnessAgent:
                     views[sid]['pendingRequests'] = len(views[sid]['requests'])
                     if views[sid]['requests']:
                         views[sid]['executionState']['phase'] = 'waiting_input' if any((r.get('method') == 'item/tool/requestUserInput' for r in views[sid]['requests'])) else 'waiting_approval'
-            return {'host': self.cfg['host_id'], 'label': self.cfg['label'], 'applicationId': APP_ID, 'physicalHostId': self.cfg['physical_host_id'], 'desktopConnected': self.connected, 'capabilities': {'actions': sorted(ACTIONS), 'nativeSettings': bool(self.native_sections), 'nativeSections': list(self.native_sections), 'permissions': 'permissions' in self.native_sections, 'permissionSwitch': False, 'projectRoots': False, 'moveToUnassigned': False, 'launchApp': False, 'nativeDeepLinks': False}, 'catalog': copy.deepcopy(self.catalog), 'projects': copy.deepcopy(self.projects), 'models': copy.deepcopy(self.models), 'views': views, 'results': dict(self.results)}
+            return {'host': self.cfg['host_id'], 'label': self.cfg['label'], 'applicationId': APP_ID, 'physicalHostId': self.cfg['physical_host_id'], 'desktopConnected': self.connected, 'capabilities': {'actions': sorted(ACTIONS), 'nativeSettings': bool(self.native_sections), 'nativeReadCache': True, 'nativeReadCacheScope': hashlib.sha256(repr((id(self.client), self.generation, self.native_cache_connection)).encode()).hexdigest()[:24], 'nativeSections': list(self.native_sections), 'permissions': 'permissions' in self.native_sections, 'permissionSwitch': False, 'projectRoots': False, 'moveToUnassigned': False, 'launchApp': False, 'nativeDeepLinks': False}, 'catalog': copy.deepcopy(self.catalog), 'projects': copy.deepcopy(self.projects), 'models': copy.deepcopy(self.models), 'views': views, 'results': dict(self.results)}
 
     def run(self):
         for endpoint in ('session/control', 'workspace/follow'):

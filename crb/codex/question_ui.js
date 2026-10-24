@@ -171,6 +171,10 @@
     'app-initial-5851df3f6cb1.js', 'c70d95da34ba7e5962a559dbf68d0102d10b4b47b877f5d9933629bb5a1f3a10',
     'app-initial-5851df3f6cb1.js', 'c70d95da34ba7e5962a559dbf68d0102d10b4b47b877f5d9933629bb5a1f3a10',
     'P6n', 'N6n', 'L6n', 'Vxr', 'single-replies']);
+  if (request.platform === 'win32') candidates.push([
+    'app-initial-ad16eaadf81f.js', '84d1c97245fec7be606fd1d263459d9a4c841836751c6ba5e9b348b69687332f',
+    'app-initial-ad16eaadf81f.js', '84d1c97245fec7be606fd1d263459d9a4c841836751c6ba5e9b348b69687332f',
+    '_9n', 'g9n', 'b9n', 'lEr', 'single-replies']);
   if (request.platform === 'darwin') candidates.push([
     'app-initial-90eb42395b7d.js', '2687d59e8c67ccf81c7efb3820211070df303c6a200c9e0e8d604f26253f2f5e',
     'app-initial-90eb42395b7d.js', '2687d59e8c67ccf81c7efb3820211070df303c6a200c9e0e8d604f26253f2f5e',
@@ -230,9 +234,10 @@
   if (!selection?.scope || !question?.resolve || typeof select !== 'function' || typeof parseAccepted !== 'function')
     throw new Error('Native question selection contract changed');
   const control = request.operation === 'question-control';
+  const retire = request.operation === 'retire-question-for-message';
   if (request.hostId !== 'local' || typeof request.threadId !== 'string' || !request.threadId ||
-      typeof request.turnId !== 'string' || !request.turnId ||
-      (!control && (!Array.isArray(request.replies) || request.replies.length < 1 || request.replies.length > 8)))
+      (!retire && (typeof request.turnId !== 'string' || !request.turnId)) ||
+      (!control && !retire && (!Array.isArray(request.replies) || request.replies.length < 1 || request.replies.length > 8)))
     throw new Error('Invalid question acknowledgement');
   const turnId = request.turnId;
   const answers = new Map();
@@ -269,6 +274,78 @@
   visit(window.__codexRoot?._internalRoot?.current);
   if (!scope) throw new Error('Native question scope unavailable');
   const hostThread = {hostId: request.hostId, threadId: request.threadId};
+  if (retire) {
+    // A later accepted ordinary turn retires this presentation; it is NOT an
+    // answer. Bind cleanup to the exact Relay message and the offered questions.
+    if (typeof request.clientUserMessageId !== 'string' || !request.clientUserMessageId ||
+        !Array.isArray(request.groups) || !request.groups.length || request.groups.length > 16)
+      throw new Error('Invalid question retirement');
+    const decideRetirement = (get = (atom, key) => scope.get(atom, key)) => {
+      const selected = get(selection, hostThread);
+      if (!selected) return {status: 'not-open'};
+      const selectedKey = selected.selectedQuestionKey, ids = selected.questionIds;
+      if (selectedKey?.hostId !== 'local' || selectedKey.threadId !== request.threadId ||
+          !Array.isArray(ids) || !ids.length || ids.length > 8)
+        return {status: 'different-question-preserved'};
+      const states = ids.map(itemId => get(question, {...selectedKey, itemId}));
+      const originalTurn = states[0]?.turnId;
+      const offered = request.groups.find(group => group.turnId === originalTurn &&
+        Array.isArray(group.questionIds) && ids.every(id => group.questionIds.includes(id)));
+      if (!offered || states.some(state => state?.turnId !== originalTurn))
+        return {status: 'different-question-preserved'};
+      if (states.some(state => state.isSubmitting || typeof state.draft !== 'string' ||
+          state.draft !== state.draftBaseline)) return {status: 'new-draft-preserved'};
+      const conversation = manager?.getConversation(request.threadId);
+      if (!conversation || conversation.hostId !== 'local') return null;
+      const history = conversation.turnHistory;
+      const turns = history?.kind === 'canonical' ? history.history.islands.flatMap(island => island.entries)
+        .map(entry => history.history.entitiesByKey[entry.value]).filter(Boolean) : conversation.turns || [];
+      const original = turns.findIndex(turn => turn.turnId === originalTurn);
+      let acceptedItem = null;
+      const later = turns.findIndex(turn => (turn.items || []).some(item => {
+        if (item.type !== 'userMessage' || ![item.id, item.clientUserMessageId, item.clientId,
+            turn.params?.clientUserMessageId].includes(request.clientUserMessageId)) return false;
+        acceptedItem = item; return true;
+      }));
+      if (later < 0) return null; // Queued/optimistic/steering input is not a new accepted turn.
+      if (original < 0 || later <= original) return {status: 'different-question-preserved'};
+      // Use the reviewed native parser, never infer an answer from plain text.
+      const replies = contract[8] !== 'single-replies' ? parseAccepted([...(turns[original].items || []), acceptedItem]).answersByQuestionItemId.size :
+        Array.isArray(acceptedItem.content) && acceptedItem.content.length === 1 && acceptedItem.content[0]?.type === 'text' ?
+          (parseAccepted(acceptedItem.content[0].text) || []).length : 0;
+      if (replies) return {status: 'different-question-preserved'};
+      const nativeQuestion = turns[original].items || [];
+      if (!ids.every(id => {
+        const identity = JSON.parse(id);
+        return identity[0] === 'request_user_input_async' && identity.length === 3 &&
+          Number.isInteger(identity[2]) && identity[2] >= 0 && nativeQuestion.some(item =>
+            item.id === identity[1] && item.delivery === 'async' && item.questions?.[identity[2]]);
+      })) return {status: 'different-question-preserved'};
+      return {status: 'question-retired'};
+    };
+    let decision = decideRetirement();
+    if (!decision && manager) {
+      decision = await new Promise((resolve, reject) => {
+        let settled = false; const disposers = [];
+        const finish = (value, error = null) => {
+          if (settled) return; settled = true; clearTimeout(timer);
+          for (const dispose of disposers) dispose();
+          if (error) reject(error); else resolve(value);
+        };
+        const inspect = get => {try {const value = decideRetirement(get); if (value) queueMicrotask(() => finish(value));}
+          catch (error) {queueMicrotask(() => finish(null, error));}};
+        const register = dispose => {if (settled) dispose(); else disposers.push(dispose);};
+        const timer = setTimeout(() => finish({status: 'awaiting-native-acceptance'}), 3000);
+        try {register(scope.watch(({get}) => inspect(get))); register(manager.subscribe({type: 'conversation', key: hostThread, listener: () => inspect()}));}
+        catch (error) {finish(null, error);}
+      });
+    }
+    if (decision?.status !== 'question-retired') return decision || {status: 'awaiting-native-acceptance'};
+    const fresh = decideRetirement();
+    if (fresh?.status !== 'question-retired') return fresh || {status: 'awaiting-native-acceptance'};
+    select(scope, hostThread, null); // Native close only. Keep all drafts, submissions and history intact.
+    return fresh;
+  }
   if (control) {
     // These are the reviewed renderer's presentation atoms, not model answers.
     // Closing preserves drafts; skipping clears only the explicitly skipped

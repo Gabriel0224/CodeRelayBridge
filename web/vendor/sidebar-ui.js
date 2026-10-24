@@ -1,7 +1,8 @@
 /* On-demand native sidebar. Every mutation is confirmed by the original App. */
 (() => {
   'use strict';
-  const cache = new Map(), loads = new Map(), attempted = new Set(), connected = new Map(), epochs = new Map();
+  const cache = new Map(), freshness = new Map(), loads = new Map(), attempted = new Set(), connected = new Map(), scopes = new Map(), epochs = new Map();
+  let generation = relayGeneration;
   let changing = false;
   const node = (tag, text, cls = '') => {
     const n = document.createElement(tag); if (text !== undefined) n.textContent = text;
@@ -14,22 +15,39 @@
   const state = host => cache.get(host?.id);
   const caller = (host, thread = '') => thread || host.threads?.find(row => !row.unavailable && !row.isSubagent)?.id || host.threads?.find(row => !row.unavailable)?.id || '';
   const report = value => { $('sendResult').textContent = value; };
-  function remember(host, value) {
+  function remember(host, value, info = null) {
     if (!value?.sections || !value.revision) throw new Error('原 App 分区结果无效');
     cache.set(host.id, {...value, threadEmojis: {...state(host)?.threadEmojis, ...value.threadEmojis}}); lastCatalog = ''; renderCatalog({preload: false});
+    freshness.delete(host.id);
+    if (info?.revision && Number.isFinite(info.maxAgeMs)) freshness.set(host.id, {
+      revision: info.revision, expires: Date.now() + Math.min(60000, Math.max(0, info.maxAgeMs))});
+    if (cache.size > 24) { const oldest = cache.keys().next().value; cache.delete(oldest); freshness.delete(oldest); attempted.delete(oldest); }
   }
-  async function load(host, force = false, thread = '') {
+  async function load(host, force = false, thread = '', refreshApp = false) {
     if (!supported(host) || !host.online || !host.desktopConnected) return null;
-    if (loads.has(host.id)) return loads.get(host.id);
+    if (loads.has(host.id)) {
+      if (!refreshApp) return loads.get(host.id);
+      await loads.get(host.id).catch(() => {});
+      return load(host, true, thread, true);
+    }
+    const remembered = freshness.get(host.id);
+    if (!refreshApp && state(host) && remembered?.expires > Date.now() &&
+        (!thread || Object.hasOwn(state(host).threadEmojis || {}, thread))) return state(host);
     if (!force && (cache.has(host.id) || attempted.has(host.id))) return state(host);
     const context = caller(host, thread);
     if (!context) { if (force) throw new Error(uiText('暂无可读取的对话上下文，请先新建对话后刷新分区')); return null; }
     attempted.add(host.id);
     const epoch = epochs.get(host.id) || 0;
-    const promise = issueCommand('native_read', {host: host.id, thread: context, payload: {operation: 'sidebar', emojiThreadId: thread || null}})
-      .then(result => { if ((epochs.get(host.id) || 0) === epoch) remember(host, result.sidebar); return result.sidebar; })
-      .catch(error => { if (force) throw error; return null; })
-      .finally(() => loads.delete(host.id));
+    const conditional = host.capabilities?.nativeReadCache === true;
+    const promise = issueCommand('native_read', {host: host.id, thread: context, payload: {operation: 'sidebar', emojiThreadId: thread || null,
+      ...(conditional ? {cache: true, refresh: refreshApp, ...(remembered && state(host) ? {ifRevision: remembered.revision} : {})} : {})}})
+      .then(result => {
+        if ((epochs.get(host.id) || 0) !== epoch) return null;
+        if (result.notModified && !state(host)) throw new Error('原 App 分区结果无效');
+        remember(host, result.notModified ? state(host) : result.sidebar, result.readCache); return state(host);
+      })
+      .catch(error => { if ((epochs.get(host.id) || 0) === epoch) freshness.delete(host.id); if (force) throw error; return null; })
+      .finally(() => { if (loads.get(host.id) === promise) loads.delete(host.id); });
     loads.set(host.id, promise); return promise;
   }
   async function mutate(host, operation, payload = {}, thread = '') {
@@ -45,7 +63,7 @@
       if (result.sidebar) remember(host, result.sidebar);
       report(result.warning || '✓ 已由原 App 保存');
       await refresh(); return result;
-    } catch (error) { report(error.message); await load(host, true).catch(() => {}); return null; }
+    } catch (error) { report(error.message); await load(host, true, '', true).catch(() => {}); return null; }
     finally { changing = false; }
   }
   const settings = node('dialog', undefined, 'native-settings-dialog');
@@ -79,7 +97,9 @@
     const snapshot = state(host); body.replaceChildren();
     if (!snapshot) { body.append(node('p', '原 App 分区暂不可用')); return; }
     body.append(button('新建分区', () => createSection(host)), button('从原 App 刷新', async () => {
-      try { await load(host, true); drawSettings(host); } catch (error) { report(error.message); }
+      body.setAttribute('aria-busy', 'true');
+      try { await load(host, true, '', true); if (settings.open && settingsHost === host.id) drawSettings(host); } catch (error) { report(error.message); }
+      finally { if (settingsHost === host.id) body.removeAttribute('aria-busy'); }
     }));
     body.append(field('分组方式', [['project', '按项目'], ['connection', '按连接'], ['list', '平铺']], snapshot.preferences.grouping?.mode || 'project',
       async grouping => { await mutate(host, 'sidebar_preferences', {grouping}); drawSettings(host); }));
@@ -107,14 +127,19 @@
       body.append(row);
     });
   }
-  const manage = button('分区与排序', async () => {
-    const host = currentHost(); if (!supported(host)) return;
-    settingsHost = host.id; settings.showModal(); body.replaceChildren(node('p', '正在读取原 App 分区…'));
+  async function openSettings(host) {
+    if (!supported(host)) return;
+    settingsHost = host.id; settings.showModal();
+    if (state(host)) drawSettings(host); else body.replaceChildren(node('p', '正在读取原 App 分区…'));
+    body.setAttribute('aria-busy', 'true');
     try { await load(host, true); if (settings.open && settingsHost === host.id) drawSettings(host); }
-    catch (error) { body.replaceChildren(node('p', error.message)); }
-  }, 'sidebarManage');
-  manage.className = 'secondary sidebar-manage'; manage.hidden = true;
-  $('projectSidebarControls').after(manage);
+    catch (error) { if (settings.open && settingsHost === host.id) { if (state(host)) report(error.message); else body.replaceChildren(node('p', error.message)); } }
+    finally { if (settingsHost === host.id) body.removeAttribute('aria-busy'); }
+  }
+  const manage = button('分区与排序', () => openSettings(currentHost()), 'sidebarManage');
+  manage.className = 'sidebar-action-button sidebar-manage'; manage.hidden = true;
+  manage.replaceChildren(node('span', manage.textContent));
+  $('sidebar').querySelector('.sidebar-primary-actions').prepend(manage);
   const title = section => section.custom ? section.name :
     ({pinned: '置顶', threads: '项目', projects: '项目', chats: '对话', orbit: 'Your dot', agents: 'Agents'}[section.id] || section.name);
   function itemSection(host, type, id) {
@@ -251,7 +276,7 @@
     }), act('删除分区', async () => {
       if (window.confirm(uiText('删除这个分区？其中的项目和对话会保留。'))) await mutate(host, 'sidebar_section_delete', {sectionId: section.id});
     }));
-    sectionMenu.append(act('分区与排序', () => { settingsHost = host.id; drawSettings(host); settings.showModal(); }));
+    sectionMenu.append(act('分区与排序', () => openSettings(host)));
     for (const action of sectionMenu.querySelectorAll('button')) { action.setAttribute('role', 'menuitem'); action.disabled = !host.online || !host.desktopConnected || changing || busy; }
     sectionMenu.hidden = false;
     const viewport = window.visualViewport, left = viewport?.offsetLeft || 0, top = viewport?.offsetTop || 0;
@@ -283,8 +308,10 @@
       const heading = node('div', undefined, 'native-sidebar-heading');
       const toggle = button(title(section), () => { contents.hidden = !contents.hidden; toggle.setAttribute('aria-expanded', String(!contents.hidden));
         try { localStorage.setItem(`crbSectionCollapsed:${host.id}:${section.id}`, contents.hidden ? '1' : '0'); } catch (_) {} });
+      toggle.className = 'native-section-toggle'; toggle.title = title(section);
       if (section.custom) toggle.setAttribute('data-i18n-ignore', '');
       const more = button('⋯', () => { const rect = more.getBoundingClientRect(); showSectionMenu(host, section, rect.left, rect.bottom); }); more.setAttribute('aria-label', uiText('分区操作'));
+      more.className = 'native-section-more';
       heading.append(toggle, more);
       heading.oncontextmenu = event => { event.preventDefault(); showSectionMenu(host, section, event.clientX, event.clientY); };
       heading.onkeydown = event => { if (event.key === 'ContextMenu' || event.shiftKey && event.key === 'F10') { event.preventDefault(); more.click(); } };
@@ -305,17 +332,26 @@
       }
       if (section.id === 'chats') addThreads(contents, visible.filter(t => !explicit.has(t.id) &&
         (grouping !== 'project' || (t.projectId || 'unassigned') === 'unassigned')).map(t => t.id), true);
-      if (!contents.children.length && (filter || !section.custom && ['threads', 'projects'].includes(section.id) && grouping !== 'project')) continue;
+      if (!contents.children.length) {
+        if (filter || !section.custom) continue;
+        contents.append(node('p', '暂无对话', 'project-empty'));
+      }
       wrap.append(heading, contents); $('catalog').append(wrap);
     }
     // Preserve visibility for older native versions that omit a built-in section.
     for (const thread of visible) if (!displayedThreads.has(thread.id)) appendThread($('catalog'), host, thread);
+    if (!$('catalog').children.length) $('catalog').append(node('p', filter ? '没有找到匹配的对话' :
+      archiveFilter === 'archived' ? '这个范围内没有已归档对话' : '这个范围内没有活跃对话', 'history-note'));
     return true;
   }
   window.SidebarPanel = {
     sync() { const host = currentHost();
+      if (generation !== relayGeneration) { generation = relayGeneration; cache.clear(); freshness.clear(); attempted.clear();
+        for (const id of loads.keys()) epochs.set(id, (epochs.get(id) || 0) + 1); loads.clear(); }
       if (host) { const online = Boolean(host.online && host.desktopConnected);
-        if (connected.get(host.id) === false && online) { cache.delete(host.id); attempted.delete(host.id); }
+        if (!online || connected.get(host.id) === false || scopes.has(host.id) && scopes.get(host.id) !== host.capabilities?.nativeReadCacheScope) { cache.delete(host.id); freshness.delete(host.id); attempted.delete(host.id);
+          epochs.set(host.id, (epochs.get(host.id) || 0) + 1); loads.delete(host.id); }
+        scopes.set(host.id, host.capabilities?.nativeReadCacheScope);
         connected.set(host.id, online); }
       manage.hidden = workspaceMode || !supported(host); manage.disabled = !host?.online || !host?.desktopConnected;
       if (!workspaceMode) load(host); if (settings.open && settingsHost !== host?.id) settings.close(); },

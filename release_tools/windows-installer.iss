@@ -5,9 +5,9 @@ AppName=CodeRelayBridge {#Role}
 AppVersion={#Version}
 AppPublisher=Gabriel
 DefaultDirName={code:InstallDirectory}
-DisableDirPage=yes
+DisableDirPage=no
 DisableProgramGroupPage=yes
-UsePreviousAppDir=no
+UsePreviousAppDir=not PayloadOnly
 UsePreviousGroup=no
 PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
@@ -40,6 +40,8 @@ english.UnsafePath=The installation directory is redirected. Nothing was changed
 chinesesimp.UnsafePath=安装目录存在路径重定向，未修改任何内容。
 english.CleanupFailed=Startup cleanup failed. Uninstall was cancelled; user data was not removed.
 chinesesimp.CleanupFailed=启动项清理失败，卸载已取消；未删除个人数据。
+english.MoveExisting=This Relay is already installed in another directory. Uninstall it before choosing a new location. Pairing, settings and history are retained.
+chinesesimp.MoveExisting=此 Relay 已安装在其他目录。更换位置前请先卸载现有程序；配对、设置和历史会保留。
 
 [Files]
 Source: "{#Source}\{#Product}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
@@ -64,7 +66,7 @@ Type: filesandordirs; Name: "{app}"
 Type: filesandordirs; Name: "{app}\*"; Check: not PayloadOnly
 
 [Code]
-var Extraction, PreviousPayload: String; InstallBegan, InstallCommitted: Boolean;
+var Extraction, PreviousPayload, SelectedDirectory: String; InstallBegan, InstallCommitted: Boolean;
 
 function EnumProcesses(var First: LongWord; Bytes: LongWord; var Needed: LongWord): Boolean;
   external 'EnumProcesses@psapi.dll stdcall';
@@ -128,6 +130,11 @@ function MetadataDirectory(Param: String): String;
 begin
   if PayloadOnly then Result := ExpandFileName(ExpandConstant('{param:CRBEXTRACT|}'))
   else Result := StateDirectory('') + '\package';
+end;
+
+function ShouldSkipPage(PageID: Integer): Boolean;
+begin
+  Result := PayloadOnly and (PageID = wpSelectDir);
 end;
 
 function SafeDirectory(Path: String): Boolean;
@@ -218,30 +225,48 @@ begin
     Result := WizardSilent and not DirExists(Root) and SafeDirectory(Root);
     if not Result then SuppressibleMsgBox('CRB: extraction requires a new, non-redirected directory and silent mode.', mbError, MB_OK, IDOK);
   end else begin
-    Result := SafeDirectory(NormalDirectory);
+    Result := True;
     if not Result then SuppressibleMsgBox(CustomMessage('UnsafePath'), mbError, MB_OK, IDOK);
   end;
 end;
 
 function PrepareToInstall(var NeedsRestart: Boolean): String;
+var Existing, StateRoot, OtherStateRoot, Path: String;
 begin
   Result := '';
+  Path := RemoveBackslashUnlessRoot(ExpandFileName(ExpandConstant('{app}')));
   Log('CRB application directory: ' + ExpandConstant('{app}'));
   Log('CRB expected directory: ' + InstallDirectory(''));
-  if CompareText(RemoveBackslashUnlessRoot(ExpandConstant('{app}')), RemoveBackslashUnlessRoot(InstallDirectory(''))) <> 0 then begin
+  if PayloadOnly then begin
+    if CompareText(Path, RemoveBackslashUnlessRoot(InstallDirectory(''))) <> 0 then
+      Result := CustomMessage('UnsafePath');
+    Exit;
+  end;
+  StateRoot := ExtractFileDir(NormalDirectory);
+  OtherStateRoot := ExpandConstant('{localappdata}\CodexRelayClient');
+  if CompareText(StateRoot, OtherStateRoot) = 0 then OtherStateRoot := ExpandConstant('{localappdata}\CodexRelayServer');
+  if (Length(Path) <= 3) or
+     (Pos(Lowercase(AddBackslash(Path)), Lowercase(AddBackslash(StateRoot))) = 1) or
+     (Pos(Lowercase(AddBackslash(Path)), Lowercase(AddBackslash(OtherStateRoot))) = 1) or
+     ((Pos(Lowercase(AddBackslash(StateRoot)), Lowercase(AddBackslash(Path))) = 1) and (CompareText(Path, NormalDirectory) <> 0)) or
+     (Pos(Lowercase(AddBackslash(OtherStateRoot)), Lowercase(AddBackslash(Path))) = 1) then begin
     Result := CustomMessage('UnsafePath'); Exit;
   end;
-  if PayloadOnly then Exit;
-  if not SafeDirectory(NormalDirectory) or not SafeContents(NormalDirectory) or not SafeDirectory(StateDirectory('')) or not SafeContents(StateDirectory('')) then begin Result := CustomMessage('UnsafePath'); Exit; end;
-  if DirExists(NormalDirectory) and not EmptyDirectory(NormalDirectory) and not OwnedApplication(NormalDirectory) then begin
+  if RegQueryStringValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Uninstall\CodeRelayBridge.{#Role}_is1', 'InstallLocation', Existing) then
+    if (CompareText(RemoveBackslashUnlessRoot(Existing), Path) <> 0) and FileExists(AddBackslash(Existing) + '{#Product}.exe') then begin
+      Result := CustomMessage('MoveExisting'); Exit;
+    end;
+  if not SafeDirectory(Path) or not SafeContents(Path) or not SafeDirectory(StateDirectory('')) or not SafeContents(StateDirectory('')) then begin Result := CustomMessage('UnsafePath'); Exit; end;
+  if DirExists(Path) and not EmptyDirectory(Path) and not OwnedApplication(Path) then begin
     Result := 'CRB: an unrecognized installation occupies the application directory. Nothing was overwritten.'; Exit;
   end;
-  if RunningRelay(NormalDirectory + '\{#Product}.exe') then
+  if RunningRelay(Path + '\{#Product}.exe') then
     Result := CustomMessage('QuitRelay');
   if Result <> '' then Exit;
-  if (PreviousPayload = '') and DirExists(NormalDirectory) and not EmptyDirectory(NormalDirectory) then begin
+  SelectedDirectory := Path;
+  if (PreviousPayload = '') and DirExists(Path) and not EmptyDirectory(Path) then begin
     PreviousPayload := StateDirectory('') + '\backups\app-' + GetDateTimeString('yyyymmddhhnnss', '-', ':') + '-' + IntToStr(SystemTickCount);
-    if DirExists(PreviousPayload) or not CopyPayload(NormalDirectory, PreviousPayload) then begin
+    if DirExists(PreviousPayload) or not CopyPayload(Path, PreviousPayload) then begin
       PreviousPayload := ''; Result := 'CRB: backup could not complete. Existing application was not replaced.';
     end;
   end;
@@ -257,8 +282,8 @@ end;
 procedure DeinitializeSetup;
 begin
   if (PreviousPayload <> '') and InstallBegan and not InstallCommitted then begin
-    if SafeDirectory(NormalDirectory) and SafeContents(NormalDirectory) and SafeDirectory(PreviousPayload) and SafeContents(PreviousPayload) then begin
-      if DelTree(AddBackslash(NormalDirectory) + '*', True, True, True) and CopyPayload(PreviousPayload, NormalDirectory) then
+    if SafeDirectory(SelectedDirectory) and SafeContents(SelectedDirectory) and SafeDirectory(PreviousPayload) and SafeContents(PreviousPayload) then begin
+      if DelTree(AddBackslash(SelectedDirectory) + '*', True, True, True) and CopyPayload(PreviousPayload, SelectedDirectory) then
         Log('CRB: restored the previous application payload after interrupted installation.')
       else Log('CRB: automatic restore was incomplete; the verified backup is retained at ' + PreviousPayload);
     end;
@@ -268,7 +293,7 @@ end;
 function InitializeUninstall: Boolean;
 var Code: Integer; Report: String;
 begin
-  Result := SafeDirectory(ExpandConstant('{app}')) and SafeContents(ExpandConstant('{app}')) and OwnedApplication(ExpandConstant('{app}')) and (CompareText(RemoveBackslashUnlessRoot(ExpandConstant('{app}')), NormalDirectory) = 0);
+  Result := SafeDirectory(ExpandConstant('{app}')) and SafeContents(ExpandConstant('{app}')) and OwnedApplication(RemoveBackslashUnlessRoot(ExpandConstant('{app}')));
   if not Result then Exit;
   Result := not RunningRelay(ExpandConstant('{app}\{#Product}.exe'));
   if not Result then SuppressibleMsgBox(CustomMessage('QuitRelay'), mbError, MB_OK, IDOK);

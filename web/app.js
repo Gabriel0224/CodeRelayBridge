@@ -12,6 +12,9 @@ let panelRestartDialogEpoch = 0;
 let lastStreamAuthProbe = 0;
 let busy = false;
 let refreshing = false;
+let nativeOutputTimer = null;
+let nativeOutputReading = false;
+let nativeOutputPaused = false;
 let loginPending = false;
 let hostRemovalEpoch = 0;
 const hostRemovals = new Map();
@@ -1226,7 +1229,9 @@ async function fetchThreadSnapshot(target, afterCommand = false, options = {}) {
   const epoch = threadSnapshotEpoch;
   const request = (async () => {
     const base = cachedThreadSnapshot(target);
-    const path = `/api/lite/thread?host=${encodeURIComponent(target.host)}&id=${encodeURIComponent(target.thread)}`;
+    const interest = catalog.find(host => host.id === target.host)?.capabilities?.nativeLiveOutput === true ?
+      `&liveOutput=${nativeOutputWanted(target) ? '1' : '0'}` : '';
+    const path = `/api/lite/thread?host=${encodeURIComponent(target.host)}&id=${encodeURIComponent(target.thread)}${interest}`;
     let reply = await api(path + (base?.revision ? `&since=${base.revision}&generation=${encodeURIComponent(relayGeneration)}` : ''), undefined, options);
     if ((!base && ['patch', 'unchanged'].includes(reply.mode))) reply = await api(path, undefined, options);
     if (threadFetches.get(key) !== request) return null;
@@ -1235,6 +1240,40 @@ async function fetchThreadSnapshot(target, afterCommand = false, options = {}) {
   threadFetches.set(key, request);
   try { return await request; }
   finally { if (threadFetches.get(key) === request) threadFetches.delete(key); }
+}
+
+function nativeOutputWanted(target = selected) {
+  const host = catalog.find(host => host.id === target?.host);
+  return Boolean(target && selected?.host === target.host && selected?.thread === target.thread &&
+    !nativeOutputPaused && !document.hidden && !$('workspace').hidden && !threadPreviewOnly && !threadWatchPending &&
+    current?.owned && current.online && current.status === 'active' && current.source === 'desktop-live' &&
+    host?.online && host.desktopConnected && host.capabilities?.nativeLiveOutput === true &&
+    current.executionState?.activeCommandIds?.length &&
+    $('timeline').querySelector('.process-group[open][data-execution-phase="executing"]'));
+}
+
+function syncNativeOutputPolling() {
+  if (!nativeOutputWanted()) {
+    clearTimeout(nativeOutputTimer);
+    nativeOutputTimer = null;
+    return;
+  }
+  if (nativeOutputTimer || nativeOutputReading) return;
+  nativeOutputTimer = setTimeout(async () => {
+    nativeOutputTimer = null;
+    if (!nativeOutputWanted()) return;
+    nativeOutputReading = true;
+    const controller = new AbortController();
+    let deadline;
+    try {
+      // A shared cache read may already be in flight. Bound our wait as well
+      // as our own fetch, so a hung read cannot block another chat's output.
+      await Promise.race([refreshThread(false, {signal: controller.signal}), new Promise((_, reject) => {
+        deadline = setTimeout(() => { controller.abort(); reject(new Error('Live output read timed out')); }, 6000);
+      })]);
+    } catch (_) { nativeOutputPaused = true; }
+    finally { clearTimeout(deadline); nativeOutputReading = false; syncNativeOutputPolling(); }
+  }, 2500);
 }
 
 function threadPreloadAllowed() {
@@ -3085,7 +3124,7 @@ function appendProjectGroup(host, group, threads, searching, parent = $('catalog
   const more = document.createElement('button');
   more.type = 'button';
   more.className = 'project-delete';
-  more.textContent = '•••';
+  more.textContent = '⋯';
   more.title = `项目操作：${group.name}`;
   more.setAttribute('aria-label', more.title);
   more.onclick = event => {
@@ -3197,6 +3236,7 @@ function clearThread() {
   clearAssetCache();
   selected = null;
   current = null;
+  syncNativeOutputPolling();
   syncProjectLocator();
   threadPreviewOnly = false;
   threadWatchPending = false;
@@ -5021,6 +5061,7 @@ function renderTimeline(thread, preserveAnchor = null) {
           requestAnimationFrame(() => keepCollapsedProcessSummaryVisible(
             $('timeline'), details, summary));
         }
+        syncNativeOutputPolling();
       };
       turnChildren.push(details);
     }
@@ -5075,6 +5116,13 @@ async function loadOlderHistory({recent = false, signal} = {}) {
   const epoch = threadSnapshotEpoch;
   const head = recentHistoryHead(current);
   const baseThread = current;
+  const previousItems = state.items;
+  const previousHead = state.recentHead;
+  const previousBoundary = {cursor: state.cursor, exhausted: state.exhausted};
+  const bridge = Boolean(recent && previousItems.length && previousHead && previousHead !== head &&
+    !(baseThread.items || []).some(item => String(item.turnId || item.id) === previousHead));
+  let bridgeItems = [];
+  let connected = !bridge;
   const timeline = $('timeline');
   const anchor = {top: timeline.scrollTop, height: timeline.scrollHeight};
   const countItems = () => new Set([...state.items, ...(baseThread.items || [])].map(itemKey)).size;
@@ -5085,6 +5133,9 @@ async function loadOlderHistory({recent = false, signal} = {}) {
   if (recent) {
     state.cursor = null;
     state.exhausted = false;
+    // Until native pages overlap the old head, these are separate history
+    // islands. Never render them as one transcript with a silently missing middle.
+    if (bridge) state.items = [];
   } else state.userExpanded = true;
   renderTimeline(current, anchor);
   try {
@@ -5098,16 +5149,31 @@ async function loadOlderHistory({recent = false, signal} = {}) {
       // Opening a process/execution/tool group only renders this local data;
       // it must not request item pages or defer execution output.
       const incoming = result.items || [];
-      state.items = recent && attempt === 0 ?
+      if (bridge) {
+        bridgeItems = mergeHistoryItems(incoming, bridgeItems);
+        connected = bridgeItems.some(item => String(item.turnId || item.id) === previousHead);
+        state.items = connected ? mergeHistoryItems(previousItems, bridgeItems) : bridgeItems;
+      } else state.items = recent && attempt === 0 ?
         mergeHistoryItems(state.items, incoming) : mergeHistoryItems(incoming, state.items);
       state.cursor = result.nextCursor || null;
       state.exhausted = !state.cursor;
+      if (bridge && connected) {
+        // The old head still exists on this native history chain. Its cached
+        // prefix and original opaque older boundary can now be reused safely.
+        state.cursor = previousBoundary.cursor || null;
+        state.exhausted = previousBoundary.exhausted === true;
+      }
       if (recent) {
         state.recentReady = true;
         if (attempt === 0) state.recentHead = recentHistoryHead({items: result.items || []}) || head;
       }
       rememberHistoryCache(key, state);
       if (selected?.host !== target.host || selected?.thread !== target.thread) break;
+      if (bridge) {
+        if (connected || !state.userExpanded &&
+            historyConversationGroups(bridgeItems).length >= RECENT_HISTORY_TURNS) break;
+        continue; // At most six native pages; an unconnected old island stays out.
+      }
       if (recent ? historyConversationGroups([...state.items, ...(baseThread.items || [])]).length >= RECENT_HISTORY_TURNS :
           countItems() > before) break;
     }
@@ -5466,6 +5532,7 @@ async function refreshThread(afterCommand = false, options = {}) {
 }
 
 function renderThreadSnapshot(thread, meta, target, online, preview = false, revision = 0) {
+  if (!preview) nativeOutputPaused = false;
   reconcileLocalOutgoing(target, thread);
   const previous = !threadPreviewOnly && !threadWatchPending && current?.id === thread.id ? current : null;
   const previousTail = previous?.lastTurnId || previous?.items?.at(-1)?.turnId;
@@ -5537,6 +5604,7 @@ function renderThreadSnapshot(thread, meta, target, online, preview = false, rev
     receipt: thread.readReceipt || ''};
   scheduleVisibleThreadRead();
   if (!preview && !threadWatchPending) void ensureRecentHistory(target);
+  syncNativeOutputPolling();
 }
 
 async function issueCommand(action, {host, thread = '', text = '', payload = {}, attachments = [], commandId = '', signal} = {}) {
@@ -7336,6 +7404,7 @@ function scheduleCatalogRefresh() {
 
 document.addEventListener('visibilitychange', () => {
   syncCapacityRetryStatus();
+  syncNativeOutputPolling();
   if (document.hidden) {
     clearThreadReadAttention();
     clearTimeout(preloadTimer);

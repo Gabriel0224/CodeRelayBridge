@@ -73,6 +73,7 @@ class NativeSidebar:
         preferences = raw.get('sidebarPreferences') or {}
         state = {'sections': sections, 'projectNativeIds': native_ids, 'preferences': preferences, 'capabilities': ui_capabilities(self.agent) if hasattr(self.agent, 'app_tools') else {}}
         state['revision'] = revision([rows, native_ids, preferences])
+        self.agent.native_live_output_available = state['capabilities'].get('liveOutput') is True
         return (state, rows)
 
     def execute(self, action, tid, payload):

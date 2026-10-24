@@ -3,7 +3,7 @@
 #define _UNICODE
 #include <windows.h>
 
-static WCHAR image[32768], command[32768];
+static WCHAR image[32768], command[32768], location[32768];
 
 static void fail(DWORD code) {
     BOOL chinese = PRIMARYLANGID(GetUserDefaultUILanguage()) == LANG_CHINESE;
@@ -32,19 +32,31 @@ static BOOL redirected(WCHAR *path) {
     }
 }
 
+static BOOL registered(const WCHAR *key_name) {
+    HKEY key; DWORD kind = 0, bytes = sizeof(location);
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, key_name, 0, KEY_QUERY_VALUE | KEY_WOW64_64KEY, &key) != ERROR_SUCCESS) return FALSE;
+    LONG result = RegQueryValueExW(key, L"InstallLocation", NULL, &kind, (BYTE *)location, &bytes);
+    RegCloseKey(key);
+    if (result != ERROR_SUCCESS || kind != REG_SZ || bytes < sizeof(WCHAR) || bytes > sizeof(location) || location[bytes / sizeof(WCHAR) - 1]) return FALSE;
+    DWORD length = lstrlenW(location);
+    while (length > 3 && (location[length - 1] == L'\\' || location[length - 1] == L'/')) location[--length] = 0;
+    return !lstrcmpiW(location, image);
+}
+
 void entry(void) {
     DWORD count = GetModuleFileNameW(NULL, image, 32768);
     if (!count || count >= 32768) fail(ERROR_BAD_PATHNAME);
     WCHAR *end = last_separator(image);
     if (!end) fail(ERROR_BAD_PATHNAME);
     *end = 0;
-    end = last_separator(image);
-    if (!end || lstrcmpiW(end + 1, L"app")) fail(ERROR_BAD_PATHNAME);
-    *end = 0;
-    end = last_separator(image);
-    if (!end || (lstrcmpiW(end + 1, L"CodexRelayClient") && lstrcmpiW(end + 1, L"CodexRelayServer"))) fail(ERROR_BAD_PATHNAME);
-    if (lstrlenW(image) > 32720) fail(ERROR_BAD_PATHNAME);
-    lstrcatW(image, L"\\installer\\unins000.exe");
+    BOOL client = registered(L"Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\CodeRelayBridge.client_is1");
+    BOOL server = registered(L"Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\CodeRelayBridge.server_is1");
+    if (client == server) fail(ERROR_BAD_PATHNAME);
+    lstrcpyW(command, image);
+    if (redirected(command)) fail(ERROR_BAD_PATHNAME);
+    count = GetEnvironmentVariableW(L"LOCALAPPDATA", image, 32768);
+    if (!count || count > 32700) fail(ERROR_BAD_PATHNAME);
+    lstrcatW(image, client ? L"\\CodexRelayClient\\installer\\unins000.exe" : L"\\CodexRelayServer\\installer\\unins000.exe");
     lstrcpyW(command, image);
     if (redirected(command)) fail(ERROR_BAD_PATHNAME);
     WCHAR *tail = GetCommandLineW();

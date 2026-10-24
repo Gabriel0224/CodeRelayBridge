@@ -16,6 +16,11 @@ import { pathToFileURL } from 'node:url';
 export const ALLOWED_TOOLS = new Set([
   'list_projects', 'create_thread', 'set_thread_title', 'set_thread_archived',
   'set_thread_read_state', 'automation_update', 'open_in_codex',
+  'list_threads', 'create_project', 'fork_thread',
+  'create_sidebar_section', 'rename_sidebar_section', 'delete_sidebar_section',
+  'move_thread_to_sidebar_section', 'move_project_to_sidebar_section',
+  'reorder_section', 'reorder_sidebar_sections', 'reorder_sidebar_projects',
+  'update_sidebar_preferences', 'get_thread_emoji', 'set_thread_emoji', 'share_thread',
 ]);
 const MAX_INPUT = 256 * 1024;
 const MAX_OUTPUT = 8 * 1024 * 1024;

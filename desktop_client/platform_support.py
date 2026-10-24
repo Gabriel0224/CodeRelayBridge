@@ -1,5 +1,6 @@
 """Native paths and launch descriptions, shared by client and server UI."""
 import os
+import json
 from pathlib import Path
 import sys
 
@@ -17,6 +18,12 @@ def data_root(product='CodexRelayClient', home=None):
 def installed_executable(root, product='RelayClient'):
     root = Path(root)
     if sys.platform == 'win32':
+        role = 'client' if product == 'RelayClient' else 'server'
+        expected = data_root('CodexRelayClient' if role == 'client' else 'CodexRelayServer')
+        if root.resolve() == expected.resolve():
+            directory = windows_install_directory(role)
+            if directory:
+                return directory / (product + '.exe')
         return root / 'app' / (product + '.exe')
     if sys.platform == 'darwin':
         title = 'Relay Client' if product == 'RelayClient' else 'Relay Server'
@@ -27,6 +34,30 @@ def installed_executable(root, product='RelayClient'):
     if layout and root.resolve() == expected.resolve():
         return Path(layout['executable'])
     return root / 'app' / product
+
+def windows_install_directory(role):
+    """Read this role's per-user native registration, including a custom path."""
+    if sys.platform != 'win32' or role not in ('client', 'server'):
+        return None
+    try:
+        import winreg
+        key_name = 'Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\CodeRelayBridge.' + role + '_is1'
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_name, 0, winreg.KEY_READ | winreg.KEY_WOW64_64KEY) as key:
+            location, kind = winreg.QueryValueEx(key, 'InstallLocation')
+        if kind != winreg.REG_SZ or not isinstance(location, str) or (not location):
+            return None
+        directory = Path(location)
+        if not directory.is_absolute() or directory == directory.parent:
+            return None
+        if any((p.is_symlink() or getattr(p, 'is_junction', lambda: False)() for p in (directory, *directory.parents))):
+            return None
+        product = 'RelayClient' if role == 'client' else 'RelayServer'
+        identity = json.loads((directory / '_internal/relay-edition.json').read_text(encoding='utf-8'))
+        if identity.get('role') != role or not (directory / (product + '.exe')).is_file():
+            return None
+        return directory
+    except (ImportError, OSError, ValueError, TypeError, AttributeError):
+        return None
 
 def packaged_root():
     return Path(getattr(sys, '_MEIPASS', Path(__file__).resolve().parent.parent))

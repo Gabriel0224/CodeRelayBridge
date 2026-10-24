@@ -844,7 +844,7 @@ def set_item_timestamp(public, item=None, turn=None, timing=None, recorded_at=No
             return public
     return public
 
-def normalize_item(item, fallback_id, asset_factory=None):
+def normalize_item(item, fallback_id, asset_factory=None, *, turn_status=None):
     raw_kind = item.get('type', 'unknown')
     kind = {'UserMessage': 'userMessage', 'SteeringUserMessage': 'steeringUserMessage', 'AgentMessage': 'agentMessage', 'AssistantMessage': 'assistantMessage', 'Reasoning': 'reasoning', 'CommandExecution': 'commandExecution', 'FileChange': 'fileChange', 'Plan': 'plan', 'McpToolCall': 'mcpToolCall', 'ImageView': 'imageView', 'WebSearch': 'webSearch', 'Extension': 'extension', 'ContextCompaction': 'contextCompaction'}.get(raw_kind, raw_kind)
     result = {'id': str(item.get('id', fallback_id)), 'type': kind, 'status': item.get('status'), 'phase': item.get('phase')}
@@ -906,7 +906,16 @@ def normalize_item(item, fallback_id, asset_factory=None):
     elif kind == 'plan':
         result['text'] = item.get('text', '')
     elif kind == 'contextCompaction':
-        result['text'] = '正在压缩上下文…' if item.get('status') in ('inProgress', 'in_progress', 'running') else '上下文已压缩'
+        completed = item.get('completed')
+        busy = item.get('status') in ('inProgress', 'in_progress', 'running') or completed is False
+        if turn_status == 'completed' or completed is True:
+            result.update(status='completed', text='上下文已压缩')
+        elif busy and turn_status in ('interrupted', 'failed'):
+            result.update(status=turn_status, text='上下文压缩已停止')
+        elif busy:
+            result.update(status='inProgress', text='正在压缩上下文…')
+        else:
+            result['text'] = '上下文已压缩'
     elif kind == 'imageView':
         result['text'] = '已查看图片'
         if item.get('path') and asset_factory:
@@ -1131,7 +1140,7 @@ def public_execution_state(state, turns=None, capacity_retry=None):
     runtime = state.get('threadRuntimeStatus') or {}
     flags = [flag for flag in runtime.get('activeFlags', []) if flag in ('waitingOnApproval', 'waitingOnUserInput')]
     items = turn.get('items') or []
-    non_user = [item for item in items if isinstance(item, dict) and item.get('type') not in ('UserMessage', 'userMessage', 'SteeringUserMessage', 'steeringUserMessage')]
+    non_user = [item for item in items if isinstance(item, dict) and item.get('type') not in ('UserMessage', 'userMessage', 'SteeringUserMessage', 'steeringUserMessage', 'HookPrompt', 'hookPrompt', 'steered')]
     pending = [r.get('method') for r in state.get('requests', []) if isinstance(r, dict)]
     in_progress = turn.get('status') in ('inProgress', 'in_progress', 'running')
     active = runtime.get('type') == 'active'
@@ -1149,17 +1158,24 @@ def public_execution_state(state, turns=None, capacity_retry=None):
     elif any((isinstance(s, dict) and s.get('terminal') is not True for s in state.get('unconfirmedTurnSubmissions', []) or [])):
         phase = 'preparing'
     elif active:
-        last = non_user[-1] if in_progress and non_user else {}
+        current_items = non_user if in_progress else []
+        last = current_items[-1] if current_items else {}
         kind = last.get('type', '')
-        busy = last.get('status') in ('inProgress', 'in_progress', 'running')
-        if kind in ('ContextCompaction', 'contextCompaction') and busy:
+        busy_statuses = ('inProgress', 'in_progress', 'running')
+        terminal_statuses = ('completed', 'interrupted', 'failed', 'declined')
+        busy = last.get('status') in busy_statuses
+        compacting = any((item.get('type') in ('ContextCompaction', 'contextCompaction') and (item.get('status') in busy_statuses or (item.get('completed') is False and item.get('status') not in terminal_statuses)) for item in current_items))
+        executing = any((item.get('type') in ('CommandExecution', 'commandExecution', 'FileChange', 'fileChange', 'McpToolCall', 'mcpToolCall', 'WebSearch', 'webSearch', 'dynamicToolCall', 'collabAgentToolCall') and item.get('status') in busy_statuses for item in current_items))
+        if compacting:
             phase = 'compacting'
-        elif kind in ('CommandExecution', 'commandExecution', 'FileChange', 'fileChange', 'McpToolCall', 'mcpToolCall', 'WebSearch', 'webSearch') and busy:
+        elif executing or (kind in ('WebSearch', 'webSearch') and last.get('status') is None):
             phase = 'executing'
-        elif kind in ('Reasoning', 'reasoning'):
+        elif kind in ('Reasoning', 'reasoning') and last.get('status') not in terminal_statuses:
             phase = 'thinking'
-        elif kind in ('AgentMessage', 'agentMessage', 'AssistantMessage', 'assistantMessage') and busy:
-            phase = 'responding'
+        elif kind in ('AgentMessage', 'agentMessage', 'AssistantMessage', 'assistantMessage'):
+            completed_messages = turn.get('agentMessageCompletedAtMsById') or {}
+            streaming = completed_messages.get(last.get('id')) is None and last.get('status') not in terminal_statuses and (busy or (last.get('status') is None and bool(last.get('id')) and (last.get('delivery') != 'async')))
+            phase = 'responding' if streaming else 'running'
         else:
             phase = 'running' if in_progress and non_user else 'waiting_output'
     elif turn.get('status') == 'interrupted':
@@ -1168,7 +1184,7 @@ def public_execution_state(state, turns=None, capacity_retry=None):
         phase = 'completed'
     else:
         phase = 'idle' if runtime.get('type') == 'idle' else 'unknown'
-    return {'phase': phase, 'turnId': turn.get('turnId') or turn.get('id'), 'turnStatus': turn.get('status'), 'activeFlags': flags, 'startedAtMs': timestamp_ms(turn.get('turnStartedAtMs')), 'hasOutput': bool(non_user)}
+    return {'phase': phase, 'turnId': turn.get('turnId') or turn.get('id'), 'turnStatus': turn.get('status'), 'activeFlags': flags, 'activeCommandIds': [item.get('id') for item in non_user if active and in_progress and (item.get('type') in ('CommandExecution', 'commandExecution')) and (item.get('status') in ('inProgress', 'in_progress', 'running')) and item.get('id')][-4:], 'startedAtMs': timestamp_ms(turn.get('turnStartedAtMs')), 'hasOutput': bool(non_user)}
 
 def view_state(state, revision, owner, asset_factory=None, turn_cache=None, capacity_observation=None):
     history = state.get('turnHistory', {}).get('history', {})
@@ -1177,7 +1193,7 @@ def view_state(state, revision, owner, asset_factory=None, turn_cache=None, capa
     def convert_turn(turn, ti):
         items = []
         for ii, item in enumerate(turn.get('items', [])):
-            normalized = normalize_item(item, f'{ti}-{ii}', asset_factory)
+            normalized = normalize_item(item, f'{ti}-{ii}', asset_factory, turn_status=turn.get('status'))
             set_item_timestamp(normalized, item, turn)
             normalized['turnId'] = turn.get('turnId')
             items.append(normalized)
@@ -1421,6 +1437,12 @@ class HostAgent:
         self.last_native_read_poll = 0
         self.last_sent = {}
         self.live_view_caches = {}
+        self.native_live_output_available = False
+        self.native_output_demand = {}
+        self.native_output_overlays = {}
+        self.native_output_wakeup = threading.Event()
+        self.native_output_worker = None
+        self.native_output_retry = {}
         self.pending_native_deliveries = {}
         self.queue_receipt_dirty = set()
         self.queue_receipt_attempts = {}
@@ -2263,6 +2285,8 @@ class HostAgent:
             with self.lock:
                 self.queue_receipt_dirty.add(tid)
             self.receipt_wakeup.set()
+        if ui_changed and tid in getattr(self, 'native_output_demand', {}):
+            self.native_output_wakeup.set()
 
     def read_catalog(self):
         self.refresh_native_read_state()
@@ -2618,7 +2642,7 @@ class HostAgent:
             for item_index, item in enumerate(turn.get('items', [])):
                 if not isinstance(item, dict):
                     continue
-                normalized = normalize_item(item, f'page-{turn_index}-{item_index}', asset_factory)
+                normalized = normalize_item(item, f'page-{turn_index}-{item_index}', asset_factory, turn_status=turn.get('status'))
                 timing = timing_lookup.get((str(turn_id or ''), str(item.get('id') or '')))
                 set_item_timestamp(normalized, item, turn, timing=timing)
                 if timing and timing.get('timestampSource') and (normalized.get('timestamp') == timing['timestamp']):
@@ -3217,6 +3241,8 @@ class HostAgent:
             action = 'project_update_roots'
         if action in ('native_read', 'native_action'):
             return NativeFeatures(self).execute(action, tid, payload)
+        if action in ('update_permissions', 'update_settings', 'project_create', 'project_delete', 'project_rename', 'project_update_roots', 'new_thread', 'archive', 'unarchive'):
+            NativeFeatures(self).cache().invalidate()
         if action in ('terminal_start', 'terminal_read', 'terminal_write', 'terminal_resize', 'terminal_close'):
             return self.execute_terminal(action, payload)
         if action == 'software_check':
@@ -3563,6 +3589,7 @@ class HostAgent:
         if not state:
             raise RuntimeError('请先在桌面 App 打开这条对话，等待网页显示“实时同步”')
         question_ack = None
+        question_retire = None
         if action == 'question_control':
             turn_id = payload.get('turnId')
             question_ids = payload.get('questionIds')
@@ -3751,8 +3778,11 @@ class HostAgent:
                 queued.append(message)
                 self.update_native_queue(tid, queued, target)
                 return {'ok': True, 'transport': 'desktop-native-queue', 'queued': True, 'messageId': command['id'], 'position': len(queued), 'confirmedAt': time.time()}
+            if not question_ack and (not async_question_replies(text)):
+                turns = state_turns(state)
+                question_retire = [{'turnId': turn['turnId'], 'questionIds': [question['questionItemId'] for question in questions]} for item, questions in pending_async_questions(state) for turn in turns if turn.get('turnId') and any((isinstance(value, dict) and value.get('id') == item.get('id') for value in turn.get('items', [])))][-16:]
             params = {'conversationId': tid, 'turnStart': {'request': {'threadId': tid, 'input': inputs, 'clientUserMessageId': command['id']}, 'context': {'inheritThreadSettings': True, **({'restoreMessage': restore_message} if restore_message else {}), 'attachments': native_attachments, 'localTurnMetadata': {'fileAttachmentCount': sum((not item.get('isImageAttachment') for item in native_attachments))}}}}
-            response = self.deliver_native_message(tid, command['id'], target, 'thread-follower-start-turn', params, version=2, receipt_context={'questionAck': question_ack} if question_ack else None)
+            response = self.deliver_native_message(tid, command['id'], target, 'thread-follower-start-turn', params, version=2, receipt_context={'questionAck': question_ack} if question_ack else {'questionRetire': question_retire} if question_retire else None)
         elif action == 'steer':
             if state.get('threadRuntimeStatus', {}).get('type') != 'active':
                 raise RuntimeError('当前没有正在运行的轮次，请使用“发送”')
@@ -3769,6 +3799,11 @@ class HostAgent:
                 result['questionUi'] = self.question_ui.defer_ack(tid, *question_ack)
             except Exception:
                 result['questionUi'] = {'status': 'unavailable', 'answerDelivered': True}
+        elif question_retire:
+            try:
+                result['questionUi'] = self.question_ui.defer_retire(tid, command['id'], question_retire)
+            except Exception:
+                result['questionUi'] = {'status': 'unavailable', 'reason': 'new-turn'}
         return result
 
     def deliver_native_message(self, tid, command_id, target, method, params, version=1, steering=False, receipt_context=None, receipt_id=None):
@@ -3826,6 +3861,8 @@ class HostAgent:
                 result.update(details['queueReceipt'])
             if details.get('questionAck'):
                 result['questionUi'] = self.question_ui.defer_ack(details['threadId'], *details['questionAck'])
+            elif details.get('questionRetire'):
+                result['questionUi'] = self.question_ui.defer_retire(details['threadId'], details['clientId'], details['questionRetire'])
             with self.connect_journal() as db:
                 current = db.execute('SELECT result FROM commands WHERE id=?', (cid,)).fetchone()
                 if not current:
@@ -3973,6 +4010,157 @@ class HostAgent:
                         self.dirty.add(target)
         threading.Thread(target=observe, name='codex-native-capacity-observer', daemon=True).start()
 
+    def probe_native_output_capability(self):
+        """One version-reviewed read after IPC connects, including workspace-only use."""
+        try:
+            capabilities = native_conversation_ui.capabilities(self) if sys.platform.startswith('linux') else {}
+            self.native_live_output_available = capabilities.get('liveOutput') is True
+        finally:
+            self.native_output_probe_busy = False
+
+    def update_native_output_demand(self, rows):
+        """Short foreground leases; no native reads or journal records here."""
+        now = time.monotonic()
+        targets = {}
+        if sys.platform.startswith('linux') and self.native_live_output_available and isinstance(rows, list):
+            for row in rows[:4]:
+                if not isinstance(row, dict):
+                    continue
+                tid, ttl = (row.get('threadId'), row.get('ttl'))
+                if isinstance(tid, str) and tid in self.states and isinstance(ttl, (int, float)) and (not isinstance(ttl, bool)) and math.isfinite(ttl) and (0 < ttl <= 8):
+                    targets[tid] = now + ttl
+        with self.lock:
+            changed = set(targets) != set(self.native_output_demand)
+            self.native_output_demand = targets
+            if targets and self.native_output_worker is None:
+                self.native_output_worker = threading.Thread(target=self.native_output_loop, name='codex-native-output-reader', daemon=True)
+                self.native_output_worker.start()
+                changed = True
+            if changed:
+                self.native_output_wakeup.set()
+
+    @staticmethod
+    def native_output_base(item):
+        detail = item.get('aggregatedOutput') or item.get('aggregated_output') or item.get('formatted_output') or item.get('stdout') or ''
+        return hashlib.sha256(str(detail)[:MAX_TOOL_DETAIL].encode()).hexdigest()
+
+    def read_native_outputs_once(self):
+        now = time.monotonic()
+        with self.lock:
+            self.native_output_demand = {tid: expiry for tid, expiry in self.native_output_demand.items() if expiry > now}
+            self.native_output_retry = {tid: expiry for tid, expiry in self.native_output_retry.items() if expiry > now and tid in self.native_output_demand}
+            if not self.native_output_demand or not self.native_live_output_available:
+                return False
+            if now < getattr(self, 'native_output_next_read', 0):
+                return True
+            jobs = {}
+            reads = getattr(self, 'native_output_last_read', {})
+            for tid in sorted(self.native_output_demand, key=lambda key: reads.get(key, 0)):
+                slot = self.states.get(tid) or {}
+                state = slot.get('state') or {}
+                turns = state_turns(state)
+                if not slot.get('owner') or state.get('threadRuntimeStatus', {}).get('type') != 'active' or (not turns) or (not turns[-1].get('turnId')) or (self.native_output_retry.get(tid, 0) > now):
+                    continue
+                turn = turns[-1]
+                if turn.get('status') != 'inProgress':
+                    continue
+                items = [item for item in turn.get('items', []) if item.get('type') in ('commandExecution', 'CommandExecution') and item.get('status') in ('inProgress', 'in_progress', 'running') and item.get('id')][-4:]
+                if items:
+                    jobs[tid] = {'turnId': turn['turnId'], 'owner': slot['owner'], 'bases': {item['id']: self.native_output_base(item) for item in items}}
+                if len(jobs) == 2:
+                    break
+            if not jobs:
+                return True
+            self.native_output_next_read = now + 2
+            self.native_output_last_read = {tid: now if tid in jobs else reads.get(tid, 0) for tid in self.native_output_demand}
+        result = native_conversation_ui.call({'operation': 'live-output', 'targets': [{'threadId': tid, 'turnId': job['turnId'], 'itemIds': list(job['bases'])} for tid, job in jobs.items()]})
+        rows = result.get('targets')
+        if not isinstance(rows, list) or len(rows) > 2:
+            raise ValueError('Invalid native public output response')
+        with self.lock:
+            for row in rows:
+                tid = row.get('threadId')
+                job = jobs.get(tid)
+                if not job or row.get('turnId') != job['turnId']:
+                    raise ValueError('Native public output scope changed')
+                if row.get('available') is not True:
+                    self.native_output_retry[tid] = time.monotonic() + 20
+                    continue
+                slot = self.states.get(tid) or {}
+                state = slot.get('state') or {}
+                turns = state_turns(state)
+                if self.native_output_demand.get(tid, 0) <= time.monotonic() or not turns or slot.get('owner') != job['owner'] or (turns[-1].get('turnId') != job['turnId']) or (turns[-1].get('status') != 'inProgress') or (state.get('threadRuntimeStatus', {}).get('type') != 'active'):
+                    continue
+                raw = {item.get('id'): item for item in turns[-1].get('items', [])}
+                values = {}
+                if not isinstance(row.get('items'), list) or len(row['items']) > 4:
+                    raise ValueError('Too many native public outputs')
+                for item in row['items']:
+                    iid, output = (item.get('id'), item.get('output'))
+                    if iid not in job['bases'] or not isinstance(output, str) or len(output.encode()) > 65568:
+                        raise ValueError('Invalid native public output')
+                    current = raw.get(iid) or {}
+                    if current.get('status') not in ('inProgress', 'in_progress', 'running') or self.native_output_base(current) != job['bases'][iid]:
+                        continue
+                    values[iid] = {'detail': output, 'base': job['bases'][iid]}
+                overlay = {'turnId': job['turnId'], 'owner': job['owner'], 'items': values}
+                if values and self.native_output_overlays.get(tid) != overlay:
+                    self.native_output_overlays.pop(tid, None)
+                    self.native_output_overlays[tid] = overlay
+                    self.dirty.add(tid)
+            while len(self.native_output_overlays) > 8:
+                self.native_output_overlays.pop(next(iter(self.native_output_overlays)))
+        return True
+
+    def native_output_loop(self):
+        delay = None
+        while True:
+            self.native_output_wakeup.wait(delay)
+            self.native_output_wakeup.clear()
+            try:
+                delay = 2 if self.read_native_outputs_once() else None
+            except Exception as exc:
+                self.native_live_output_available = False
+                print('Native public output:', type(exc).__name__, flush=True)
+                delay = None
+
+    def apply_native_outputs(self, tid, state, view):
+        with self.lock:
+            overlay = getattr(self, 'native_output_overlays', {}).get(tid)
+            owner = (self.states.get(tid) or {}).get('owner')
+        if not overlay or not view.get('owned') or view.get('status') != 'active' or (overlay['owner'] != owner) or (overlay['turnId'] != view.get('lastTurnId')):
+            return view
+        turns = state_turns(state)
+        turn = turns[-1] if turns else {}
+        if turn.get('status') != 'inProgress':
+            return view
+        raw = {item.get('id'): item for item in turn.get('items', [])}
+        items = {item.get('id'): item for item in view['items'] if item.get('turnId') == overlay['turnId']}
+        changed = False
+        for iid, value in overlay['items'].items():
+            item = raw.get(iid) or {}
+            if item.get('status') not in ('inProgress', 'in_progress', 'running') or self.native_output_base(item) != value['base']:
+                continue
+            public = items.get(iid)
+            if public is None:
+                public = normalize_item(item, iid)
+                public['turnId'] = overlay['turnId']
+                set_item_timestamp(public, item, turn)
+            items[iid] = {**public, 'detail': value['detail'], 'liveOutput': True}
+            changed = True
+        if changed:
+            order = {item.get('id'): index for index, item in enumerate(turn.get('items', []))}
+            values = [item for item in view['items'] if item.get('turnId') != overlay['turnId']]
+            values += sorted(items.values(), key=lambda item: order.get(item.get('id'), float('inf')))
+            latest_user = next((item for item in reversed(values) if item.get('type') in ('userMessage', 'steeringUserMessage')), None)
+            optional = [item for item in values if not item.get('liveOutput') and item is not latest_user]
+            while optional and len(json.dumps(values, ensure_ascii=False, separators=(',', ':')).encode()) > MAX_VIEW_ITEMS_BYTES:
+                dropped = optional.pop(0)
+                values = [item for item in values if item is not dropped]
+            view['items'] = bounded_recent_items(values)
+            view['partialHistory'] |= len(view['items']) < view['totalItems']
+        return view
+
     def build_dirty_views(self):
         """Normalize immutable snapshots outside the foreground state lock."""
         with self.lock:
@@ -3983,6 +4171,7 @@ class HostAgent:
             factory = lambda source, kind=None, name=None, tid=tid: self.register_asset(tid, source, kind, name)
             try:
                 view = view_state(state, revision, owner, factory, turn_cache=cache, capacity_observation=capacity_observation)
+                self.apply_native_outputs(tid, state, view)
                 view.update(unread=unread, readReceipt=read_receipt, canLoadHistory=bool(self.appserver), queuedMessages=self.public_queued_followups(tid))
             except Exception:
                 with self.lock:
@@ -4013,6 +4202,9 @@ class HostAgent:
                         try:
                             self.ipc = DesktopIPC(self.desktop_ipc, self.on_event)
                             self.ipc.connect()
+                            if sys.platform.startswith('linux') and (not getattr(self, 'native_output_probe_busy', False)):
+                                self.native_output_probe_busy = True
+                                threading.Thread(target=self.probe_native_output_capability, name='codex-native-output-capability', daemon=True).start()
                             if retry is not None:
                                 retry.success('desktop')
                         except OSError:
@@ -4042,7 +4234,7 @@ class HostAgent:
                 with self.lock:
                     views = dict(list(self.last_sent.items())[:1])
                     pending_results = list(self.results.items())
-                    payload = {'host': self.cfg['host_id'], 'label': self.cfg['label'], 'desktopConnected': bool(self.ipc and self.ipc.connected), 'terminal': self.terminal_info, 'capabilities': {'queueResume': True, 'nativeSidebar': True, 'editHistory': True, 'newThreadSettings': True, 'softwarePackages': ['codex']}, 'catalog': [row.copy() for row in self.catalog], 'projects': self.projects, 'models': self.models, 'views': views}
+                    payload = {'host': self.cfg['host_id'], 'label': self.cfg['label'], 'desktopConnected': bool(self.ipc and self.ipc.connected), 'terminal': self.terminal_info, 'capabilities': {'queueResume': True, 'nativeSidebar': True, 'nativeReadCache': True, 'nativeReadCacheScope': NativeFeatures(self).cache_scope(), 'nativeLiveOutput': bool(getattr(self, 'native_live_output_available', False)), 'editHistory': True, 'newThreadSettings': True, 'softwarePackages': ['codex']}, 'catalog': [row.copy() for row in self.catalog], 'projects': self.projects, 'models': self.models, 'views': views}
                 results = {}
                 result_bytes = 0
                 for cid, value in pending_results:
@@ -4063,6 +4255,7 @@ class HostAgent:
                 opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
                 with opener.open(req, timeout=60) as resp:
                     reply = json.load(resp)
+                self.update_native_output_demand(reply.get('liveOutputDemand', []))
                 refills = []
                 with self.lock:
                     for tid, value in views.items():

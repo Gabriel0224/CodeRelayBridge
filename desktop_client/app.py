@@ -212,7 +212,7 @@ class BridgeCard(QFrame):
 
 class MainWindow(QMainWindow):
 
-    def __init__(self, manager=None, preferences=None, startup=None, tray_enabled=True, setup_service=None, session=None, app_launcher=None):
+    def __init__(self, manager=None, preferences=None, startup=None, tray_enabled=True, setup_service=None, session=None, app_launcher=None, background_updates=None):
         super().__init__()
         load_offscreen_fonts()
         self.manager = manager or BridgeManager()
@@ -325,6 +325,8 @@ class MainWindow(QMainWindow):
         self.timer.start(5000)
         self.navigate(0)
         QTimer.singleShot(0, self.refresh)
+        if background_updates:
+            self.relay_update_dialog().start_background_checks()
 
     @staticmethod
     def page(title, subtitle):
@@ -666,15 +668,18 @@ class MainWindow(QMainWindow):
     def exit_client(self):
         self.begin_shutdown('close')
 
+    def relay_update_dialog(self):
+        from desktop_client.update_ui import UpdateDialog
+        from desktop_client.update_channels import ChannelSettings
+        if not self.update_dialog:
+            self.update_dialog = UpdateDialog(self, 'client', settings=ChannelSettings('client', self.preferences.path.parent))
+            self.update_dialog.installRequested.connect(self.apply_relay_update)
+        return self.update_dialog
+
     def open_relay_update(self):
         if self.shutdown_mode:
             return
-        from desktop_client.update_ui import UpdateDialog
-        if not self.update_dialog:
-            self.update_dialog = UpdateDialog(self, 'client')
-            self.update_dialog.installRequested.connect(self.apply_relay_update)
-        self.update_dialog.show()
-        self.update_dialog.raise_()
+        self.relay_update_dialog().show_manual()
 
     def apply_relay_update(self, plan_file):
         try:
