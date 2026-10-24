@@ -8,19 +8,34 @@ from PySide6 import QtWidgets as W, QtGui as G
 from PySide6.QtCore import QLocale, QSignalBlocker
 from shiboken6 import isValid
 from crb.i18n.ui_i18n import language, selected_language, set_language, tr
-_bindings = weakref.WeakKeyDictionary()
+_bindings = {}
+
+def _properties(obj):
+    identity = id(obj)
+    entry = _bindings.get(identity)
+    if entry is not None and entry[0]() is obj:
+        return entry[1]
+
+    def forget(reference):
+        current = _bindings.get(identity)
+        if current is not None and current[0] is reference:
+            _bindings.pop(identity, None)
+    properties = {}
+    _bindings[identity] = (weakref.ref(obj, forget), properties)
+    return properties
 
 def _bind(obj, key, value, setter):
     if isinstance(value, str):
-        _bindings.setdefault(obj, {})[key] = (value, setter)
+        _properties(obj)[key] = (value, setter)
         setter(obj, tr(value))
     else:
         setter(obj, value)
 
 def apply_language(value):
     set_language(value)
-    for obj, properties in list(_bindings.items()):
-        if isValid(obj):
+    for reference, properties in list(_bindings.values()):
+        obj = reference()
+        if obj is not None and isValid(obj):
             for source, setter in list(properties.values()):
                 setter(obj, tr(source))
 
@@ -104,7 +119,7 @@ class QComboBox(_UiText, W.QComboBox):
         _bind(self, ('item', index), value, lambda obj, text, i=index: W.QComboBox.setItemText(obj, i, text))
 
     def clear(self):
-        _bindings.pop(self, None)
+        _bindings.pop(id(self), None)
         super().clear()
 
 class QAction(G.QAction):

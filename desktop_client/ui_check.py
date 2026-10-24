@@ -33,7 +33,11 @@ def check(role, report):
         else:
             from desktop_server.app import ServerWindow
             from desktop_server.backend import ServerManager
-            window = ServerWindow(ServerManager(Path(directory) / 'server', directory))
+            manager = ServerManager(Path(directory) / 'server', directory)
+            device_status = {'configured': True, 'running': True, 'url': 'https://relay.example', 'config': str(Path(directory) / 'server/config.json'), 'hosts': [{'id': 'online', 'label': '在线', 'applicationId': 'codex', 'online': True, 'desktopConnected': True}, {'id': 'offline', 'label': '离线', 'applicationId': 'deepseek', 'online': False, 'desktopConnected': False}]}
+            manager.status = lambda: device_status
+            window = ServerWindow(manager, background_updates=False)
+            window.apply_status(device_status)
         window.timer.stop()
         window.show()
         app.processEvents()
@@ -44,6 +48,12 @@ def check(role, report):
             window.language_select.setCurrentIndex(0 if language == 'zh' else 1)
             window.language_select.activated.emit(0 if language == 'zh' else 1)
             apply_language(language)
+            if role == 'server':
+                expected = [['在线', '已连接'], ['离线', '未连接']] if language == 'zh' else [['Online', 'Connected'], ['Offline', 'Disconnected']]
+                cells = [[window.table.item(row, col).text() for col in (2, 3)] for row in range(2)]
+                labels = [window.table.item(row, 0).text() for row in range(2)]
+                if cells != expected or labels != ['在线', '离线']:
+                    errors.append({'language': language, 'error': 'Device status translation or user labels differ'})
             for width, height in [(760, 560), (1040, 760), (1400, 950)]:
                 window.resize(width, height)
                 for index in range(pages.count()):
@@ -68,7 +78,7 @@ def check(role, report):
         screenshot = Path(report).with_suffix('.png')
         window.grab().save(str(screenshot))
         window.pool.waitForDone(8000) if hasattr(window, 'pool') else window.thread_pool.waitForDone(8000) if hasattr(window, 'thread_pool') else None
-        atomic_json(Path(report), {'role': role, 'platform': os.sys.platform, 'passed': not errors, 'errors': errors, 'screenshot': str(screenshot), 'offscreen': True, 'languages': language_checks})
+        atomic_json(Path(report), {'role': role, 'platform': os.sys.platform, 'passed': not errors, 'errors': errors, 'screenshot': str(screenshot), 'offscreen': True, 'languages': language_checks, 'populatedDeviceStatusCellsChecked': role == 'server'})
         window.hide()
         window.deleteLater()
         app.processEvents()

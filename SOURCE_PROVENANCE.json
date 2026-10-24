@@ -255,8 +255,8 @@
       "exportSha256": "b3e2d8c42763030deccb2df00f18ca252bec9792098fefcaa4c34300af299a33"
     },
     "desktop_client/__init__.py": {
-      "canonicalSha256": "c7a9fde2b05c9dba03860ff91a3eb2b45863f22acf5f4d0ce6dd2a48806abe14",
-      "exportSha256": "fb6a03fbd3abe7ebe80fb90eaffa0ccc8a530099a168953fabeeb3f190843d21"
+      "canonicalSha256": "30fb7f1ede67d633788581f6b7e3781db5395440de7df4d80388ee7ee8a4a6bf",
+      "exportSha256": "d107381132011af22ac30d20251f39c8371cd6d25a4daedcbde68a7b71e01a44"
     },
     "desktop_client/acceptance.py": {
       "canonicalSha256": "89dee34346aa1d650e9aeeb009c77c972108009e2e3a4678c3e5cf00e1fe320c",
@@ -299,8 +299,8 @@
       "exportSha256": "cb4bbdda1c6c2013aeae90e056ace285f4afb1beea1367599c046189626abcd7"
     },
     "desktop_client/i18n.py": {
-      "canonicalSha256": "9126b2df2fe6dc5cf58b41031c679b040e092f75574893f94958c59c5f23e0b2",
-      "exportSha256": "e2f3daae46598e596e24c2e3361564a647257588c03c26f66b2cb6c0e6a5e56d"
+      "canonicalSha256": "9cb7db3c23c8d5468011d2b6f16647845a81c897c8b76046ca999ee4d1b6e287",
+      "exportSha256": "da810d1ca662ec77d786cbc94cdd5e0c8a2ee5278690cb3c98fb9501b78ea8fc"
     },
     "desktop_client/independent_checks.py": {
       "canonicalSha256": "06604f681eae739615f5c8587c7c78ad31925cb74c91f35aaa983a03344016f3",
@@ -423,8 +423,8 @@
       "exportSha256": "d55d4857aadf8d8f4e2207765e37425e3e02c9f324965e0b82cad4177f6c0c40"
     },
     "desktop_client/ui_check.py": {
-      "canonicalSha256": "82489eadb31c49ab64e14fae80bda72dfe5e0c3cc2369a38e1e9c01c6099b9b9",
-      "exportSha256": "5d9589821e75710d2a9a85381220a5eb62987ad6313667734655c5ba7ea49472"
+      "canonicalSha256": "d3b590c48e40e5310ca7e4a71f9fd79e254349119aa829c43c92a7118d9649b7",
+      "exportSha256": "a64490a0e12e3f05ec61e71b98bf00cbcc1408c20baf0e33bec8ac85d9472228"
     },
     "desktop_client/update_apply.py": {
       "canonicalSha256": "034c204562a51d100af9838de01662ad1bcfddd2a6863b5a859a8c1cab017ff3",
@@ -521,6 +521,10 @@
     "docs/RELEASE_NOTES_0.6.51.md": {
       "canonicalSha256": "af7ed55cc0864d76b40d03716b27bf4bdeda9a1d19f29f4f792486b3b49c2be2",
       "exportSha256": "af7ed55cc0864d76b40d03716b27bf4bdeda9a1d19f29f4f792486b3b49c2be2"
+    },
+    "docs/RELEASE_NOTES_0.6.66.md": {
+      "canonicalSha256": "3a9184d786c4134f81053c16a9ef294efafc04a80bfc137c33299ee581231f5c",
+      "exportSha256": "3a9184d786c4134f81053c16a9ef294efafc04a80bfc137c33299ee581231f5c"
     },
     "docs/SOURCE_CHANGES.md": {
       "canonicalSha256": "0fa1e8977cd1cd5d214efc28cc2eb19be30e83fe857b9b4a5b00941f6ade97fa",
