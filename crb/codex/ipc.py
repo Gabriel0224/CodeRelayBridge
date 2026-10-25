@@ -346,18 +346,38 @@ class DesktopIPC:
         return self.client_id is not None
 
     def connect(self):
-        self.sock = connect_stream(self.path, 10)
-        self.sock.settimeout(None)
-        threading.Thread(target=self._read, daemon=True).start()
-        result = self.request('initialize', {'clientType': 'codex-desktop-relay'}, version=0)
-        self.client_id = result['result']['clientId']
+        sock = connect_stream(self.path, 10)
+        sock.settimeout(None)
+        with self.lock:
+            self.sock = sock
+        threading.Thread(target=self._read, args=(sock,), daemon=True).start()
+        try:
+            result = self.request('initialize', {'clientType': 'codex-desktop-relay'}, version=0)
+            with self.lock:
+                if self.sock is not sock:
+                    raise ConnectionError('桌面 App 在初始化时断开')
+                self.client_id = result['result']['clientId']
+        except Exception:
+            try:
+                shutdown = getattr(sock, 'shutdown', None)
+                if shutdown is not None:
+                    shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            sock.close()
+            raise
 
     def send(self, message):
         data = json.dumps(message, ensure_ascii=False, separators=(',', ':')).encode()
         with self.writer:
-            if self.sock is None:
+            with self.lock:
+                sock = self.sock
+            if sock is None:
                 raise ConnectionError('桌面 App 已断开')
-            self.sock.sendall(struct.pack('<I', len(data)) + data)
+            try:
+                sock.sendall(struct.pack('<I', len(data)) + data)
+            except (OSError, ValueError):
+                raise ConnectionError('桌面 App 写入中断；请核对原对话，未自动重发请求') from None
 
     def request(self, method, params, version=1, target=None, timeout=15):
         rid = str(uuid.uuid4())
@@ -377,6 +397,8 @@ class DesktopIPC:
             response = box['response']
             if response.get('resultType') != 'success':
                 error = response.get('error', '桌面端拒绝请求')
+                if response.get('outcomeUnknown') is True:
+                    raise ConnectionError(error)
                 if error == method + '-timeout':
                     raise TimeoutError(error)
                 raise RuntimeError(error)
@@ -394,22 +416,28 @@ class DesktopIPC:
             message['targetClientIds'] = list(target_client_ids)
         self.send(message)
 
-    def _exact(self, n):
+    def _exact(self, n, sock=None):
+        sock = self.sock if sock is None else sock
         chunks = bytearray()
         while len(chunks) < n:
-            part = self.sock.recv(n - len(chunks))
+            part = sock.recv(n - len(chunks))
             if not part:
                 raise ConnectionError('桌面 App 通信连接关闭')
             chunks.extend(part)
         return chunks
 
-    def _read(self):
+    def _read(self, sock=None):
+        sock = self.sock if sock is None else sock
+        error = '桌面 App 通信连接关闭；未自动重发请求'
         try:
             while True:
-                length = struct.unpack('<I', self._exact(4))[0]
+                length = struct.unpack('<I', self._exact(4, sock))[0]
                 if not 0 < length <= 256 * 1024 * 1024:
                     raise ValueError('IPC frame size out of bounds')
-                msg = json.loads(self._exact(length))
+                msg = json.loads(self._exact(length, sock))
+                with self.lock:
+                    if self.sock is not sock:
+                        return
                 if msg.get('type') == 'response':
                     with self.lock:
                         waiter = self.pending.get(msg.get('requestId'))
@@ -420,18 +448,29 @@ class DesktopIPC:
                     self.send({'type': 'client-discovery-response', 'requestId': msg['requestId'], 'response': {'canHandle': False}})
                 else:
                     self.on_event(msg)
-        except (OSError, ValueError, ConnectionError, TypeError) as exc:
-            self.client_id = None
-            sock, self.sock = (self.sock, None)
-            if sock is not None:
-                sock.close()
+        except Exception as exc:
+            error = f'桌面 App 通信中断（{type(exc).__name__}）；未自动重发请求'
+        finally:
             with self.lock:
-                for ready, box in self.pending.values():
-                    if ready.is_set():
-                        continue
-                    box['response'] = {'resultType': 'error', 'error': str(exc)}
-                    ready.set()
-            self.on_event({'type': 'disconnected'})
+                owned = self.sock is sock
+                if owned:
+                    self.sock = None
+                    self.client_id = None
+                    for ready, box in self.pending.values():
+                        if ready.is_set():
+                            continue
+                        box['response'] = {'resultType': 'error', 'error': error, 'outcomeUnknown': True}
+                        ready.set()
+            if sock is not None:
+                try:
+                    sock.close()
+                except OSError:
+                    pass
+            if owned:
+                try:
+                    self.on_event({'type': 'disconnected'})
+                except Exception:
+                    pass
 
 def apply_patches(document, patches, copy_on_write=False):
     """Apply the array-path JSON patches emitted by the installed Desktop."""

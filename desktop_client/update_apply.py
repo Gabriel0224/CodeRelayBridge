@@ -11,6 +11,9 @@ from desktop_client.connections import atomic_json
 from desktop_client.platform_support import data_root, installed_executable
 from desktop_client.relay_updates import UpdateError, package_executable, repository, validate_identity, verify_manifest, verify_file
 
+class RollbackError(UpdateError):
+    """Keep backups and do not launch a partially restored installation."""
+
 def package_root(executable):
     executable = Path(executable).absolute()
     return executable.parents[2] if sys.platform == 'darwin' else executable.parent
@@ -106,9 +109,33 @@ def wait_for_owner(plan, timeout=90):
             raise UpdateError('原 Relay 尚未完全退出，更新取消；没有强制结束其他进程。')
         time.sleep(0.2)
 
+def replace_contents(source, target):
+    """Mirror an owned program tree while keeping its root directory inode."""
+
+    def remove(path):
+        if path.is_symlink():
+            path.unlink()
+        elif getattr(path, 'is_junction', lambda: False)():
+            path.rmdir()
+        elif path.is_dir():
+            shutil.rmtree(path)
+        else:
+            path.unlink()
+
+    def prune(src, dst):
+        for path in dst.iterdir():
+            expected = src / path.name
+            if path.is_dir() and (not path.is_symlink()) and (not getattr(path, 'is_junction', lambda: False)()) and expected.is_dir() and (not expected.is_symlink()):
+                prune(expected, path)
+            elif not expected.exists() and (not expected.is_symlink()) or path.is_symlink() or expected.is_symlink() or getattr(path, 'is_junction', lambda: False)() or (path.is_dir() != expected.is_dir()):
+                remove(path)
+    prune(Path(source), Path(target))
+    shutil.copytree(source, target, dirs_exist_ok=True, symlinks=True)
+
 def transactional_replace(candidate, targets):
     """Keep full backups; restore all targets on any copy/swap failure."""
     candidate = Path(candidate)
+    expected = tree_hashes(candidate)
     stamp = str(time.time_ns())
     records = []
     try:
@@ -118,9 +145,9 @@ def transactional_replace(candidate, targets):
             target = target.resolve()
             backup = target.with_name(target.name + '-crb-backup-' + stamp)
             replacement = target.with_name(target.name + '-crb-new-' + stamp)
-            shutil.copytree(candidate, replacement, symlinks=True)
-            record = {'target': target, 'backup': backup, 'new': replacement, 'inPlace': False, 'replaced': False}
+            record = {'target': target, 'backup': backup, 'new': replacement, 'inPlace': False, 'replaced': False, 'backupReady': False}
             records.append(record)
+            shutil.copytree(candidate, replacement, symlinks=True)
             try:
                 target.rename(backup)
             except OSError as error:
@@ -128,27 +155,54 @@ def transactional_replace(candidate, targets):
                     raise
                 shutil.copytree(target, backup, symlinks=True)
                 record['inPlace'] = True
+            record['backupReady'] = True
             if record['inPlace']:
-                shutil.copytree(replacement, target, dirs_exist_ok=True, symlinks=True)
+                replace_contents(replacement, target)
             else:
                 replacement.rename(target)
+            if tree_hashes(target) != expected:
+                raise UpdateError('更新后的程序文件与已校验的候选不一致，恢复旧程序。')
             record['replaced'] = True
+            if replacement.exists():
+                shutil.rmtree(replacement)
         return records
     except Exception:
-        rollback(records)
+        try:
+            rollback(records)
+        finally:
+            for row in records:
+                if row['new'].exists():
+                    shutil.rmtree(row['new'], ignore_errors=True)
+                if not row['backupReady'] and row['backup'].exists():
+                    shutil.rmtree(row['backup'], ignore_errors=True)
         raise
 
 def rollback(records):
+    failures = []
     for row in reversed(records):
         target, backup = (row['target'], row['backup'])
-        if not backup.exists():
+        if not row.get('backupReady', True) or row.get('restored'):
             continue
-        if row['inPlace']:
-            shutil.copytree(backup, target, dirs_exist_ok=True, symlinks=True)
-        else:
-            if target.exists():
-                target.rename(target.with_name(target.name + '-crb-failed-' + str(time.time_ns())))
-            backup.rename(target)
+        try:
+            if not backup.is_dir():
+                raise UpdateError('恢复备份不可用')
+            expected = tree_hashes(backup)
+            if row['inPlace']:
+                replace_contents(backup, target)
+            else:
+                failed = target.with_name(target.name + '-crb-failed-' + str(time.time_ns()))
+                if target.exists():
+                    target.rename(failed)
+                backup.rename(target)
+                if failed.exists():
+                    shutil.rmtree(failed, ignore_errors=True)
+            if tree_hashes(target) != expected:
+                raise UpdateError('恢复文件与备份不一致')
+            row['restored'] = True
+        except (OSError, UpdateError):
+            failures.append(str(backup))
+    if failures:
+        raise RollbackError('更新未完成，部分程序尚未恢复；完整备份已保留：' + '、'.join(failures))
 
 def launch_updated(plan):
     target = package_executable(Path(plan['targets'][0]), plan['role'])
@@ -224,8 +278,11 @@ def apply(plan_file):
         atomic_json(result_file, {'passed': True, 'version': payload['version'], 'role': plan['role'], 'edition': plan['edition'], 'restartedPid': launched.pid, 'backups': ([native_transaction['archive']] if native_transaction else []) + [str(row['backup']) for row in records], 'configurationReplaced': False})
         return 0
     except Exception as error:
-        rollback(records)
-        recovered = True
+        recovered = not isinstance(error, RollbackError)
+        try:
+            rollback(records)
+        except UpdateError as recovery_error:
+            error, recovered = (recovery_error, False)
         if native_transaction:
             try:
                 from desktop_client.system_deb_update import restore

@@ -80,8 +80,12 @@
         ['app-initial-df84a35d942d.js', 'd7659a96f7d0cfe2249e089ef19675d09d04d6dd9569b550ddaa64722d4f13f3', null, null, 'YPr', 'utn'],
       ],
       darwin: [['app-initial-90eb42395b7d.js', '2687d59e8c67ccf81c7efb3820211070df303c6a200c9e0e8d604f26253f2f5e', null, null, 'YPr', 'utn']],
-      linux: [['app-initial-17317d71fd80.js', '3cec672b3ffa028c5e7d47eab4198ef0102bd04955e45282154de8aa3f840ce1',
-        'app-shared-6fc3d63f0486.js', 'e24dc1a9e516fb12b36edfe2ae984185ca1238787fcc19938501a097b1acd06c', 'v$t', 'U2t']],
+      linux: [
+        ['app-initial-b7dae1c6de39.js', '793e56f9223e327364d4a6df4199e0941727334b4c2d8adaf6e794752166b02e',
+          'app-shared-f2257985f1b6.js', 'be5fbb46d2d4b3fea9e7a4fc7385032e1e3f26d32d4e5cf9ce3fd51617baed5d', 'HJt', 'hyt'],
+        ['app-initial-17317d71fd80.js', '3cec672b3ffa028c5e7d47eab4198ef0102bd04955e45282154de8aa3f840ce1',
+          'app-shared-6fc3d63f0486.js', 'e24dc1a9e516fb12b36edfe2ae984185ca1238787fcc19938501a097b1acd06c', 'v$t', 'U2t'],
+      ],
     };
     const hash = async bytes => [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))]
       .map(value => value.toString(16).padStart(2, '0')).join('');
@@ -183,6 +187,11 @@
     'app-initial-17317d71fd80.js', '3cec672b3ffa028c5e7d47eab4198ef0102bd04955e45282154de8aa3f840ce1',
     'app-shared-6fc3d63f0486.js', 'e24dc1a9e516fb12b36edfe2ae984185ca1238787fcc19938501a097b1acd06c',
     'dKn', 'uKn', 'mKn', 'L8']);
+  if (request.platform === 'linux') candidates.push([
+    'app-initial-b7dae1c6de39.js', '793e56f9223e327364d4a6df4199e0941727334b4c2d8adaf6e794752166b02e',
+    'app-shared-f2257985f1b6.js', 'be5fbb46d2d4b3fea9e7a4fc7385032e1e3f26d32d4e5cf9ce3fd51617baed5d',
+    'SIn', 'xIn', 'EIn', 'Z0', 'turn-replies',
+    'app-primary-7cd71c43119e.js', 'e067b304984644ac148c11e98d0a654d01ad6f2b5be37ae50f28183ca2166bfb']);
   if (!candidates.length) throw new Error('Unreviewed native question UI platform');
   // An absent app:// asset is not guaranteed to finish with HTTP 404. Prefer
   // the already loaded bundle, then bound each local read including its body.
@@ -228,6 +237,12 @@
     .map(b => b.toString(16).padStart(2, '0')).join('');
   if (sharedHash !== contract[3])
     throw new Error('Unreviewed native answer parser version');
+  if (contract[9]) {
+    const primaryBytes = await localAsset(contract[9]);
+    const primaryHash = [...new Uint8Array(await crypto.subtle.digest('SHA-256', primaryBytes))]
+      .map(b => b.toString(16).padStart(2, '0')).join('');
+    if (primaryHash !== contract[10]) throw new Error('Unreviewed native question component version');
+  }
   const shared = await import(sharedAsset);
   const parseAccepted = shared[contract[7]];
   const selection = native[contract[4]], question = native[contract[5]], select = native[contract[6]];

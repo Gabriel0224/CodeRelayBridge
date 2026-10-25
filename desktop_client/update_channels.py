@@ -106,12 +106,12 @@ def check_gitee(updater):
         return {'available': True, 'current': updater.current, 'latest': payload['version'], 'repository': updater.repo, 'package': package, 'assetUrl': asset_url(selected[0]), 'manifest': envelope, 'channel': 'gitee'}
     return {'available': False, 'current': updater.current, 'latest': updater.current, 'repository': updater.repo, 'channel': 'gitee'}
 
-def measure(http, url, *, cancelled=None, clock=time.monotonic):
+def measure(transport, url, *, cancelled=None, clock=time.monotonic):
     """At most 256 KiB read per eligible channel, only on explicit new-version check."""
     began = clock()
     total = 0
     try:
-        with http.open(url, binary=True, byte_range=PROBE_BYTES, timeout=2) as response:
+        with transport.open(url, binary=True, byte_range=PROBE_BYTES, timeout=2) as response:
             read = getattr(response, 'read1', response.read)
             while total < PROBE_BYTES and clock() - began < PROBE_SECONDS:
                 if cancelled and cancelled():

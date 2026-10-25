@@ -100,11 +100,14 @@ def compress_response_body(body, coding):
     return body
 
 def allow_late_native_receipt(command_id, thread_id, action, previous, incoming):
-    """An authenticated host may correct UNKNOWN, never an explicit rejection.
+    """A host may resolve a pending fork or correct UNKNOWN, never a rejection.
 
     Task failure is separate from message acceptance. Require the exact native
     message identity and original conversation, not text or active status.
     """
+    if action == 'fork_thread':
+        valid_id = lambda value: isinstance(value, str) and 0 < len(value) <= 200
+        return isinstance(previous, dict) and isinstance(incoming, dict) and (previous.get('ok') is True) and (previous.get('pending') is True) and (not previous.get('threadId')) and (previous.get('sourceThreadId') == thread_id) and valid_id(previous.get('clientThreadId')) and (incoming.get('ok') is True) and (incoming.get('pending') is False) and (incoming.get('sourceThreadId') == thread_id) and (incoming.get('clientThreadId') == previous['clientThreadId']) and valid_id(incoming.get('threadId')) and (incoming['threadId'] != thread_id) and (incoming['threadId'] != previous['clientThreadId'])
     if action not in ('send', 'steer', 'answer_choice', 'queue_send_now'):
         return False
     if not isinstance(previous, dict) or previous.get('unknown') is not True:
@@ -439,6 +442,9 @@ class Relay:
         self.client_pairing = ClientPairing(self.dbpath, cfg['session_secret'], cfg['agents'])
         with self.db() as db:
             db.execute('CREATE TABLE IF NOT EXISTS commands (id TEXT PRIMARY KEY, host TEXT, thread TEXT, action TEXT, text TEXT, created REAL, result TEXT)')
+            db.execute('CREATE TABLE IF NOT EXISTS command_requests (id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL)')
+            for row in db.execute("SELECT id,host,thread,action,text FROM commands WHERE (result IS NULL OR text!='') AND id NOT IN (SELECT id FROM command_requests)").fetchall():
+                db.execute('INSERT INTO command_requests VALUES(?,?)', (row[0], self.request_fingerprint(*row[1:])))
             db.execute('CREATE TABLE IF NOT EXISTS traffic_sessions (id INTEGER PRIMARY KEY, started REAL NOT NULL, ended REAL)')
             db.execute('CREATE TABLE IF NOT EXISTS traffic_minutes (session_id INTEGER NOT NULL, minute INTEGER NOT NULL, upload_bytes INTEGER NOT NULL DEFAULT 0, download_bytes INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(session_id, minute))')
             db.execute('CREATE TABLE IF NOT EXISTS ui_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)')
@@ -712,6 +718,22 @@ class Relay:
                 self.removed_host_events = self.removed_host_events[-64:]
             self.changed.notify_all()
 
+    def expire_host_leases(self):
+        """Invalidate catalogs once per lease expiry, using the existing SSE wait."""
+        with self.lock:
+            now = time.time()
+            expired = [host for host in self.hosts.values() if host.get('_online', True) and now - host['seen'] >= HOST_ONLINE_TTL]
+            for host in expired:
+                host['_online'] = False
+            if expired:
+                self.signal()
+            deadlines = [HOST_ONLINE_TTL - (now - host['seen']) for host in self.hosts.values() if host.get('_online', True)]
+            return min([15.0, *deadlines])
+
+    @staticmethod
+    def request_fingerprint(host, tid, action, text):
+        return hashlib.sha256(json.dumps([host, tid, action, text], ensure_ascii=False, separators=(',', ':')).encode()).hexdigest()
+
     def cookie(self, lifetime=7 * 86400):
         data = f'{int(time.time()) + lifetime}.{secrets.token_hex(12)}'
         sig = hmac.new(self.cfg['session_secret'].encode(), data.encode(), hashlib.sha256).hexdigest()
@@ -735,7 +757,7 @@ class Relay:
             raise ValueError('未知设备')
         with self.lock:
             h = self.hosts.get(host)
-            if not h or time.time() - h['seen'] > HOST_ONLINE_TTL:
+            if not h or time.time() - h['seen'] >= HOST_ONLINE_TTL:
                 raise ValueError('目标设备当前离线')
             capabilities = h.get('capabilities', {})
             if 'actions' in capabilities and action not in capabilities['actions']:
@@ -746,12 +768,16 @@ class Relay:
         cid = cid or str(uuid.uuid4())
         uuid.UUID(cid)
         with self.db() as db:
+            db.execute('BEGIN IMMEDIATE')
             old = db.execute('SELECT host,thread,action,text FROM commands WHERE id=?', (cid,)).fetchone()
+            fingerprint = self.request_fingerprint(host, tid, action, text)
             if old:
-                if old != (host, tid, action, text):
+                saved = db.execute('SELECT fingerprint FROM command_requests WHERE id=?', (cid,)).fetchone()
+                if not saved or not hmac.compare_digest(saved[0], fingerprint):
                     raise ValueError('请求标识已被另一条消息使用')
             else:
                 db.execute('INSERT INTO commands VALUES(?,?,?,?,?,?,NULL)', (cid, host, tid, action, text, time.time()))
+                db.execute('INSERT OR REPLACE INTO command_requests VALUES(?,?)', (cid, fingerprint))
         return cid
 
     def queue_secure_update(self, host, package, password):
@@ -763,7 +789,7 @@ class Relay:
             raise ValueError('未知设备')
         with self.lock:
             state = self.hosts.get(host)
-            if not state or time.time() - state['seen'] > HOST_ONLINE_TTL:
+            if not state or time.time() - state['seen'] >= HOST_ONLINE_TTL:
                 raise ValueError('目标设备当前离线')
             if any((job['host'] == host and job['result'] is None for job in self.secure_commands.values())):
                 raise ValueError('此设备已有更新正在进行')
@@ -1245,8 +1271,10 @@ def handler_factory(app):
                 incoming = {'label': data['label'], 'catalog': data['catalog'], 'applicationId': enrolled['applicationId'] if enrolled else app.cfg.get('application_nodes', {}).get(host, {}).get('applicationId', 'codex'), 'physicalHostId': enrolled['physicalHostId'] if enrolled else app.cfg.get('application_nodes', {}).get(host, {}).get('physicalHostId', host), 'capabilities': data.get('capabilities', {}), 'projects': data.get('projects', []), 'models': data.get('models', []), 'terminal': data.get('terminal', {'supported': False}), 'desktopConnected': data.get('desktopConnected', False)}
                 changed = any((state.get(key) != value for key, value in incoming.items()))
                 changed = any((state.get(key) != value for key, value in incoming.items()))
+                changed = changed or not state.get('_online', True) or time.time() - state.get('seen', 0) >= HOST_ONLINE_TTL
                 state.update(incoming)
                 state['seen'] = time.time()
+                state['_online'] = True
                 for tid, view in data.get('views', {}).items():
                     previous = state['views'].get(tid)
                     comparable = lambda value: {key: item for key, item in value.items() if key != 'updated'} if isinstance(value, dict) else value
@@ -1289,6 +1317,7 @@ def handler_factory(app):
                 changed = changed or cursor.rowcount > 0
                 rows = db.execute("SELECT id,thread,action,text FROM commands WHERE host=? AND result IS NULL AND action NOT IN ('start_app','start_bridge') ORDER BY created LIMIT 16", (host,)).fetchall()
                 db.execute("DELETE FROM commands WHERE result IS NOT NULL AND ((action='fetch_asset' AND created<?) OR (action LIKE 'terminal_%' AND created<?) OR created<?)", (now - 3600, now - 600, now - 86400))
+                db.execute('DELETE FROM command_requests WHERE id NOT IN (SELECT id FROM commands)')
             if changed:
                 app.signal()
             response = {'generation': app.generation, 'commands': [dict(zip(('id', 'thread', 'action', 'text'), row)) for row in rows] + secure_rows}
@@ -1311,6 +1340,7 @@ def handler_factory(app):
                     caps = dict(state.get('capabilities', {}), clientControl=control, actions=['start_app', 'start_bridge', 'restart_client'], launchApp=True)
                     incoming['capabilities'] = caps
                     changed = any((state.get(key) != value for key, value in incoming.items()))
+                    changed = changed or not state.get('_online', True) or time.time() - state.get('seen', 0) >= HOST_ONLINE_TTL
                     state.update(incoming)
                     for tid, before in list(state['views'].items()):
                         if before.get('owned'):
@@ -1319,6 +1349,7 @@ def handler_factory(app):
                             app.update_lite_view(host, tid, value)
                             changed = True
                     state['seen'] = time.time()
+                    state['_online'] = True
             acknowledged = []
             with app.db() as db:
                 db.execute("UPDATE commands SET result=? WHERE host=? AND result IS NULL AND action IN ('start_app','start_bridge','restart_client') AND created<?", (json.dumps({'ok': False, 'unknown': True, 'error': '客户端管理操作确认超时；不会自动重发'}), host, time.time() - 90))
@@ -1353,8 +1384,10 @@ def handler_factory(app):
             while time.monotonic() < end:
                 removed = []
                 with app.changed:
+                    lease_wait = app.expire_host_leases()
                     if version == app.version:
-                        app.changed.wait(15)
+                        app.changed.wait(lease_wait)
+                        app.expire_host_leases()
                     if version != app.version and min_interval:
                         remaining = last_emit + min_interval - time.monotonic()
                         while remaining > 0:

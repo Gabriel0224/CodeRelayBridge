@@ -676,11 +676,22 @@ class HarnessAgent:
                 request['cwd'] = self.cfg.get('default_cwd') or (self.workspace['items'][0]['path'] if self.workspace['items'] else str(Path.home() / 'Documents' / 'deepseek-harness' / 'default-workspace'))
             created = self.rpc('session/create', request)
             sid = created['sessionId']
-            self.select_model(sid, p)
-            self.watch(sid)
-            if p.get('prompt'):
-                self.send(sid, p['prompt'], [], cid)
-            result = {'threadId': sid}
+            if not isinstance(sid, str) or not sid:
+                raise HarnessError('Harness 未确认新会话标识；请先核对原 App', 'harness/protocol', True)
+            result = {'ok': True, 'threadId': sid, 'initialMessagePending': bool(p.get('prompt')), 'initialMessageOutcomeUnknown': False, 'creationStage': 'created'}
+            sending = False
+            try:
+                self.save_creation_receipt(cid, result)
+                self.select_model(sid, p)
+                self.watch(sid)
+                if p.get('prompt'):
+                    result.update(creationStage='sending', initialMessageOutcomeUnknown=True)
+                    self.save_creation_receipt(cid, result)
+                    sending = True
+                    self.send(sid, p['prompt'], [], cid)
+                result.update(creationStage='ready', initialMessagePending=False, initialMessageOutcomeUnknown=False)
+            except Exception as error:
+                result.update(initialMessageWarning=str(error), initialMessageOutcomeUnknown=sending and bool(getattr(error, 'unknown', True)))
         elif action == 'rename_thread':
             result = self.rpc('session/rename', {'sessionId': sid, 'title': p.get('title') or p.get('name')})
         elif action == 'fork_thread':
@@ -903,6 +914,10 @@ class HarnessAgent:
                 raise HarnessError('原 App 尚未确认插件状态；不会重复修改', 'harness/plugin', True)
         warning = '\n'.join([warning, *result.get('warnings', [])]).strip()
         return {'application': result['application'], 'warning': warning}
+
+    def save_creation_receipt(self, cid, result):
+        with self.db() as db:
+            db.execute('UPDATE commands SET result=? WHERE id=?', (json.dumps(result, ensure_ascii=False), cid))
 
     def worker(self):
         while not self.stop.is_set():
