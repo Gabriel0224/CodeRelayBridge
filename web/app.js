@@ -102,6 +102,12 @@ let capacityCountdownTimer = null;
 const submittedChoices = new Set();
 let editingQueuedMessageId = '';
 let initialSelectionDone = false;
+let panelNavigationReady = false;
+let panelNavigationApplying = false;
+let panelNavigationWaiting = false;
+let panelNavigationInitialized = false;
+let panelHistoryReturning = false;
+let panelHistoryIntent = null;
 let modelDirty = false;
 let permissionDirty = false;
 let pendingSpeedChange = null;
@@ -452,6 +458,238 @@ try {
 } catch (_) {
   localStorage.removeItem('codexRelayLayout');
 }
+
+// Routes contain identities only. Chat data, drafts and caches keep their
+// existing owners; navigating never submits a message or changes membership.
+const PANEL_SETTINGS_SECTIONS = ['tasks', 'permissions', 'tools', 'review', 'metadata'];
+
+function readPanelRoute() {
+  if (window.location.pathname.length > 8192) return {kind: 'invalid'};
+  const path = window.location.pathname.replace(/\/$/, '');
+  if (['', '/lite'].includes(path)) return {kind: 'legacy'};
+  let parts;
+  try {
+    parts = path.slice(1).split('/').map(decodeURIComponent);
+  } catch (_) { return {kind: 'invalid'}; }
+  if (parts.some(part => !part || part.length > 256 || /[\x00-\x1f\x7f]/.test(part) ||
+      part === '.' || part === '..')) return {kind: 'invalid'};
+  const [kind, host = '', thread = '', section = 'tasks'] = parts;
+  const params = new URLSearchParams(window.location.search);
+  if (kind === 'main' && parts.length <= 2) return {kind, host};
+  if (kind === 'workspace' && [1, 3].includes(parts.length)) return {kind, host, thread};
+  if (kind === 'chat' && parts.length === 3) return {kind, host, thread};
+  if (kind === 'settings' && [1, 3, 4].includes(parts.length) &&
+      PANEL_SETTINGS_SECTIONS.includes(section)) {
+    return {kind, host, thread, section, workspace: params.get('view') === 'workspace'};
+  }
+  return {kind: 'invalid'};
+}
+
+function panelBasePath() {
+  const suffix = selected ? `/${encodeURIComponent(selected.host)}/${encodeURIComponent(selected.thread)}` : '';
+  if (workspaceMode) return '/workspace' + suffix;
+  return selected ? '/chat' + suffix : '/main' + (currentHost() ? `/${encodeURIComponent(currentHost().id)}` : '');
+}
+
+function panelRouteURL(path) {
+  const next = new URL(path, window.location.origin);
+  const current = new URL(window.location.href);
+  // Preserve unrelated embedding/recovery parameters and anchors. Only `view`
+  // belongs to this router; it distinguishes workspace settings from a chat.
+  current.pathname = next.pathname;
+  current.searchParams.delete('view');
+  for (const [key, value] of next.searchParams) current.searchParams.set(key, value);
+  return current.pathname + current.search + current.hash;
+}
+
+function writePanelRoute(path, replace = false, returnPath = '') {
+  // history.back() completes asynchronously. Keep a newer UI action until
+  // that traversal lands, so its popstate cannot overwrite a reopened dialog.
+  if (panelHistoryReturning) {
+    panelHistoryIntent = path;
+    return;
+  }
+  const next = panelRouteURL(path);
+  const current = window.location.pathname + window.location.search + window.location.hash;
+  if (next !== current) {
+    try {
+      window.history[replace || !panelNavigationInitialized ? 'replaceState' : 'pushState'](
+        {crbPanelRoute: 1, ...(returnPath ? {returnPath} : {})}, '', next);
+    } catch (_) { return; }
+  }
+  panelNavigationInitialized = true;
+}
+
+function syncPanelRoute() {
+  if (!panelNavigationReady || panelNavigationApplying || $('workspace').hidden) return;
+  panelNavigationWaiting = false;
+  const settings = window.NativePanel?.routeContext?.();
+  if (settings) {
+    panelSettingsRoute(settings.section);
+    return;
+  }
+  writePanelRoute(panelBasePath());
+}
+
+function panelSettingsRoute(section) {
+  if (!panelNavigationReady || panelNavigationApplying || !selected || $('workspace').hidden) return;
+  panelNavigationWaiting = false;
+  const current = readPanelRoute();
+  const suffix = `/${encodeURIComponent(selected.host)}/${encodeURIComponent(selected.thread)}/${section}`;
+  const parent = current.kind === 'settings' ? window.history.state?.returnPath || '' :
+    window.location.pathname + window.location.search + window.location.hash;
+  writePanelRoute('/settings' + suffix + (workspaceMode ? '?view=workspace' : ''),
+    current.kind === 'settings', parent);
+}
+
+function closePanelSettingsRoute(userInitiated = true) {
+  if (panelNavigationApplying || $('workspace').hidden || readPanelRoute().kind !== 'settings') return;
+  if (!userInitiated) {
+    if (!panelNavigationWaiting) {
+      panelNavigationWaiting = true;
+      panelRouteNotice('当前对话的设置暂不可用，请检查电脑连接与应用支持。');
+    }
+    return;
+  }
+  panelNavigationWaiting = false;
+  const base = panelRouteURL(panelBasePath());
+  if (panelHistoryReturning) {
+    panelHistoryIntent = panelBasePath();
+    return;
+  }
+  if (window.history.state?.crbPanelRoute === 1 && window.history.state.returnPath === base) {
+    panelHistoryReturning = true;
+    panelHistoryIntent = null;
+    window.history.back();
+  } else {
+    writePanelRoute(panelBasePath(), true);
+    panelNavigationWaiting = false;
+  }
+}
+
+function savePanelDraft() {
+  if (!selected) return;
+  drafts.set(threadKey(selected.host, selected.thread), $('message').value);
+  attachmentDrafts.set(threadKey(selected.host, selected.thread), [...pendingFiles]);
+}
+
+function panelRouteNotice(text) {
+  const message = document.createElement('div');
+  message.dataset.panelRoute = 'true';
+  message.textContent = uiText(text);
+  $('notice').hidden = false;
+  $('notice').append(message);
+}
+
+function applyPanelRoute(options = {}) {
+  if (!panelNavigationReady || panelHistoryReturning || $('workspace').hidden) return;
+  const route = readPanelRoute();
+  if (route.kind === 'legacy') return;
+  panelNavigationInitialized = true;
+  panelNavigationApplying = true;
+  panelNavigationWaiting = false;
+  try {
+    clearTimeout(preloadTimer);
+    preloadTimer = null;
+    preloadController?.abort();
+    $('notice').querySelectorAll('[data-panel-route]').forEach(node => node.remove());
+    if (!$('notice').hasChildNodes()) $('notice').hidden = true;
+    // Before the first render there is no visible navigation state to save.
+    // Capturing defaults here would overwrite the saved project's filters.
+    if (!options.initial) {
+      savePanelDraft();
+      captureHostNavigation();
+    }
+    const isWorkspace = route.kind === 'workspace' || route.workspace === true;
+    let host = route.host ? catalog.find(item => item.id === route.host) : null;
+    let thread = route.thread ? host?.threads.find(item => item.id === route.thread) : null;
+    if (route.kind === 'settings' && !route.host) {
+      const remembered = isWorkspace ? rememberedWorkspaceTarget() : null;
+      host = remembered?.host || catalog.find(item => item.id === selectedHostId) || applicationHosts()[0];
+      thread = remembered?.thread || (host && rememberedThread(host));
+    }
+    const needsThread = ['chat', 'settings'].includes(route.kind) || Boolean(route.thread);
+    const unavailable = route.kind === 'invalid' || route.host && !host ||
+      needsThread && (!thread || thread.unavailable) ||
+      isWorkspace && route.thread && !isWorkspaceThread(route.host, route.thread);
+    const sameThread = selected && thread && selected.host === host?.id && selected.thread === thread.id;
+    if (!sameThread || unavailable) {
+      if ($('nativeSettingsDialog')?.open) $('nativeSettingsDialog').close();
+      clearThread();
+    }
+    workspaceMode = isWorkspace;
+    if (host) {
+      selectedHostId = host.id;
+      selectedApplicationId = applicationId(host);
+    }
+    if (workspaceMode) applyWorkspaceNavigation();
+    else if (currentHost()) applyHostNavigation(currentHost());
+    lastCatalog = '';
+    if (unavailable) {
+      renderCatalog({preload: false});
+      panelNavigationWaiting = route.kind !== 'invalid';
+      panelRouteNotice(route.kind === 'invalid' ? '这个面板地址无效，请从左侧重新选择。' :
+        '链接中的电脑或对话暂不可用，请检查连接或从左侧重新选择。');
+      return;
+    }
+    if (thread) {
+      if (!workspaceMode) revealThreadInFilters(thread);
+      else {
+        archiveFilter = 'all';
+        $('search').value = '';
+      }
+      if (!sameThread) {
+        // Selection establishes its identity synchronously; existing fetch
+        // guards discard late responses when Back/Forward selects another chat.
+        void selectThread(host, thread, true, false, {keepSidebarOpen: true});
+      } else {
+        renderCatalog({preload: false});
+        captureHostNavigation();
+      }
+    } else {
+      renderCatalog({preload: false});
+      captureHostNavigation();
+    }
+    if (route.kind === 'settings') {
+      if (!window.NativePanel?.open(route.section, true)) {
+        panelNavigationWaiting = true;
+        panelRouteNotice('当前对话的设置暂不可用，请检查电脑连接与应用支持。');
+      }
+    } else if ($('nativeSettingsDialog')?.open) {
+      $('nativeSettingsDialog').close();
+    }
+    const path = route.kind === 'settings' && selected ?
+      `/settings/${encodeURIComponent(selected.host)}/${encodeURIComponent(selected.thread)}/${route.section}` +
+        (workspaceMode ? '?view=workspace' : '') : panelBasePath();
+    writePanelRoute(path, true, window.history.state?.returnPath || '');
+  } finally {
+    panelNavigationApplying = false;
+  }
+}
+
+window.PanelNavigation = {
+  settingsOpened: panelSettingsRoute,
+  settingsClosed: closePanelSettingsRoute,
+  ready: () => { if (panelNavigationWaiting) applyPanelRoute(); }
+};
+window.addEventListener('popstate', () => {
+  if (panelHistoryReturning) {
+    const intent = panelHistoryIntent;
+    panelHistoryReturning = false;
+    panelHistoryIntent = null;
+    if (intent && panelNavigationReady && !$('workspace').hidden) {
+      // The UI already performed this newer selection/read. Commit its address
+      // without applying the obsolete destination or repeating native reads.
+      const base = panelBasePath();
+      if (intent.startsWith('/settings/')) {
+        writePanelRoute(base);
+        writePanelRoute(intent, false, panelRouteURL(base));
+      } else writePanelRoute(intent);
+      return;
+    }
+  }
+  applyPanelRoute();
+});
 
 function groupKey(hostId, projectId) {
   return `${hostId}/${projectId || 'unassigned'}`;
@@ -1357,6 +1595,7 @@ function applyLiteCatalogPatch(hosts, patches) {
 
 function showLogin() {
   if (edgeRedirecting) return;
+  panelNavigationReady = false;
   source?.close();
   source = null;
   clearThreadSnapshots();
@@ -1590,6 +1829,7 @@ function revealThreadProject(hostId, threadId, userInitiated = false) {
   if (selected?.host === host.id && selected.thread === thread.id) {
     // Revealing an already open chat must not reload its timeline or draft.
     renderCatalog({preload: false});
+    syncPanelRoute();
   } else {
     void selectThread(host, thread, true, userInitiated);
   }
@@ -1614,6 +1854,12 @@ async function updateWorkspaceMembership(action, hostId, threadId, extra = {}) {
   const result = await api('/api/ui/workspace', {...extra, action,
     host: hostId, thread: threadId});
   workspaceThreads = result.workspaceThreads;
+  if (action === 'remove' && workspaceMode && selected?.host === hostId && selected.thread === threadId) {
+    savePanelDraft();
+    captureHostNavigation();
+    clearThread();
+    syncPanelRoute();
+  }
   lastCatalog = '';
   renderCatalog();
   scheduleCatalogRefresh();
@@ -3456,6 +3702,7 @@ async function selectThread(host, thread, revealSelection = false, userInitiated
   syncThreadControls();
   renderCatalog();
   captureHostNavigation(host.id);
+  syncPanelRoute();
   syncFileDirectoryContext();
   const cached = cachedThreadSnapshot(target, true);
   if (cached) renderThreadSnapshot(cached.thread, thread, target, false, true, cached.revision);
@@ -7312,9 +7559,10 @@ async function refresh(seed = null) {
         selectedHostId = applicationHosts()[0]?.id || '';
       }
       const restoringInitialSelection = !initialSelectionDone && !selected;
+      const restoringRoute = restoringInitialSelection && readPanelRoute().kind !== 'legacy';
       let initialThread = null;
       let initialHost = null;
-      if (restoringInitialSelection) {
+      if (restoringInitialSelection && !restoringRoute) {
         if (workspaceMode) {
           applyWorkspaceNavigation();
           const target = rememberedWorkspaceTarget();
@@ -7328,8 +7576,10 @@ async function refresh(seed = null) {
           }
         }
       }
+      panelNavigationReady = true;
+      if (restoringRoute) applyPanelRoute({initial: true});
       syncSidebarSelectors();
-      renderCatalog();
+      renderCatalog({preload: !restoringRoute && !panelNavigationWaiting});
       const selectedMeta = selectedThread();
       if (selectedMeta && current?.id === selectedMeta.id &&
           selected?.host === currentHost()?.id) {
@@ -7339,26 +7589,36 @@ async function refresh(seed = null) {
       
       if (restoringInitialSelection) {
         initialSelectionDone = true;
-        if (initialHost && initialThread) await selectThread(initialHost, initialThread, false);
-        else captureHostNavigation();
+        if (!restoringRoute && initialHost && initialThread) await selectThread(initialHost, initialThread, false);
+        else if (!restoringRoute) {
+          captureHostNavigation();
+          syncPanelRoute();
+        }
+      } else if (panelNavigationWaiting || workspaceChanged && workspaceMode && selected &&
+          !isWorkspaceThread(selected.host, selected.thread)) {
+        applyPanelRoute();
       } else {
         const host = currentHost();
         const selectedStillExists = host && selected?.host === host.id &&
           host.threads.some(thread => thread.id === selected.thread);
         if (selected && !selectedStillExists) {
-          clearThread();
-          if (workspaceMode) {
-            const target = rememberedWorkspaceTarget();
-            if (target) await selectThread(target.host, target.thread, false);
-            else renderCatalog();
-          } else if (host) {
-            applyHostNavigation(host);
-            const fallback = rememberedThread(host);
-            if (fallback) {
-              await selectThread(host, fallback, false);
-            } else {
-              renderCatalog();
-              captureHostNavigation(host.id);
+          if (readPanelRoute().host) {
+            applyPanelRoute();
+          } else {
+            clearThread();
+            if (workspaceMode) {
+              const target = rememberedWorkspaceTarget();
+              if (target) await selectThread(target.host, target.thread, false);
+              else renderCatalog();
+            } else if (host) {
+              applyHostNavigation(host);
+              const fallback = rememberedThread(host);
+              if (fallback) {
+                await selectThread(host, fallback, false);
+              } else {
+                renderCatalog();
+                captureHostNavigation(host.id);
+              }
             }
           }
         } else {
@@ -8398,7 +8658,10 @@ $('application').onchange = async () => {
   if ($('codexUpdatesDialog').open) $('codexUpdatesDialog').close();
   const target = workspaceMode ? rememberedWorkspaceTarget() : host ? {host, thread: rememberedThread(host)} : null;
   if (target?.host && target.thread) await selectThread(target.host, target.thread, false, false, {keepSidebarOpen: true});
-  else captureHostNavigation();
+  else {
+    captureHostNavigation();
+    syncPanelRoute();
+  }
 };
 
 $('device').onchange = async () => {
@@ -8422,6 +8685,7 @@ $('device').onchange = async () => {
     await selectThread(target.host, target.thread, false, false, {keepSidebarOpen: true});
   } else {
     captureHostNavigation();
+    syncPanelRoute();
   }
   ;
 };
@@ -8912,6 +9176,7 @@ $('archive').onclick = async () => {
       const navigation = hostNavigation.get(host.id) || {};
       hostNavigation.set(host.id, {...navigation, threadId: ''});
       rememberHostNavigation();
+      syncPanelRoute();
     }
     $('sendResult').textContent = action === 'archive' ? '✓ 已归档' : '✓ 已恢复为活跃会话';
     await refresh();

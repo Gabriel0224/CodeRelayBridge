@@ -9,6 +9,7 @@
   document.body.append(dialog);
   const body = dialog.querySelector('.native-body'), status = dialog.querySelector('.native-status');
   let target = null, section = 'tasks', epoch = 0, pending = false, readController = null;
+  let closeFromUser = false;
   const readTimeoutMs = 15000;
   const cache = new Map(), connections = new Map();
   let generation = relayGeneration;
@@ -324,11 +325,12 @@
     const content = `请处理文件批注：${absolute}:${line}\n${message.trim()}${quote ? '\n所选内容：\n' + quote.slice(0, 4000) : ''}`;
     $('message').value += ($('message').value ? '\n\n' : '') + content;
     $('message').dispatchEvent(new Event('input', {bubbles: true}));
-    if (dialog.open) dialog.close(); $('filePreviewDialog')?.close(); $('message').focus();
+    if (dialog.open) dismissSettings(); $('filePreviewDialog')?.close(); $('message').focus();
   }
   async function load(name, options = {}, refreshApp = false) {
     if (!supportedSections().includes(name)) return;
     section = name;
+    if (dialog.open && valid()) window.PanelNavigation?.settingsOpened(name);
     const version = ++epoch;
     readController?.abort();
     const key = cacheKey(name, options), remembered = cache.get(key);
@@ -378,28 +380,34 @@
       if (version === epoch) body.removeAttribute('aria-busy');
     }
   }
-  function open(name = 'tasks') {
-    if (!selected || !currentHost()?.online) {
-      $('sendResult').textContent = '先打开在线电脑上的对话'; return;
+  function open(name = 'tasks', exact = false) {
+    if (!selected || !currentHost()?.online || exact && currentHost()?.desktopConnected === false) {
+      $('sendResult').textContent = '先打开在线电脑上的对话'; return false;
     }
     target = {...selected};
     const allowed = supportedSections();
-    if (!allowed.length) return;
+    if (!allowed.length || exact && !allowed.includes(name)) return false;
+    closeFromUser = false;
     if (!allowed.includes(name)) name = allowed[0];
     section = name;
     syncCapabilities();
     dialog.querySelector('.native-header strong').textContent = `${APPLICATION_LABELS[applicationId(currentHost())] || applicationId(currentHost())} · ${currentHost().label} · 原生设置`;
     if (!dialog.open) dialog.showModal();
     void load(name);
+    return true;
   }
   for (const [key, name] of Object.entries(names)) {
     const tab = button(name, () => void load(key)); tab.dataset.section = key; tab.setAttribute('role', 'tab');
     dialog.querySelector('.native-tabs').append(tab);
   }
-  dialog.querySelector('.native-header button').onclick = () => dialog.close();
+  function dismissSettings() { closeFromUser = true; dialog.close(); }
+  dialog.querySelector('.native-header button').onclick = dismissSettings;
+  dialog.addEventListener('cancel', () => { closeFromUser = true; });
   dialog.addEventListener('close', () => {
     // The queued close event can arrive after a quick reopen; do not cancel it.
     if (dialog.open) return;
+    const userInitiated = closeFromUser; closeFromUser = false;
+    window.PanelNavigation?.settingsClosed(userInitiated);
     epoch++; readController?.abort(); readController = null;
     body.replaceChildren(); body.removeAttribute('aria-busy'); status.textContent = '';
   });
@@ -430,6 +438,8 @@
     if (dialog.open) dialog.close();
     body.replaceChildren(); body.removeAttribute('aria-busy'); status.textContent = '';
   }).observe($('workspace'), {attributes: true, attributeFilter: ['hidden']});
-  window.NativePanel = {open, annotation, syncCapabilities};
+  window.NativePanel = {open, annotation, syncCapabilities,
+    routeContext: () => dialog.open && valid() ? {section} : null};
   syncCapabilities();
+  window.PanelNavigation?.ready();
 })();

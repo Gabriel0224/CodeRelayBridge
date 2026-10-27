@@ -1,5 +1,11 @@
 # Source changes awaiting an installer release
 
+## 0.6.68 deployment build
+
+- Panel addresses restore the selected computer, conversation, workspace and settings category. Direct links, refresh and browser navigation preserve the intended target and page drafts.
+- Conversation completion notifications float below the header without moving the conversation. The close button stays at the right edge, including on narrow screens and with long titles.
+- 本次部署包含页面路由和悬浮完成通知，保留原配色、配对、工作区和历史；不代表已发布新 Release。
+
 These changes are in source only. Existing release installers and online deployments are unchanged. Update both Relay roles together when deploying these capabilities.
 
 - Codex user messages can be edited from earlier turns, including loaded older history. Editing replaces that message and the following conversation content through the original app. Attachments and current thread settings are retained; changes to files on disk are not undone. Running tasks must finish before editing. Older apps that reject historical editing require a reviewed local adapter; unsupported app versions report an error without automatically retrying an edit.

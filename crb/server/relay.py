@@ -26,7 +26,7 @@ import subprocess
 import sys
 import threading
 import time
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, urlsplit, unquote
 import uuid
 import zlib
 if os.name != 'nt':
@@ -45,6 +45,28 @@ RESPONSE_GZIP_MIN_BYTES = 4 * 1024
 SSH_TERMINAL_BUFFER_LIMIT = 2 * 1024 * 1024
 SSH_TERMINAL_READ_LIMIT = 128 * 1024
 MAX_SSH_TERMINALS = 24
+
+def is_panel_page_path(path):
+    """Only known frontend routes serve the shell, never an API/asset fallback."""
+    if len(path) > 8192 or re.search('%(?![0-9a-fA-F]{2})', path):
+        return False
+    try:
+        normalized = path[:-1] if path.endswith('/') else path
+        parts = [unquote(part, errors='strict') for part in normalized.split('/')[1:]]
+    except (UnicodeError, ValueError):
+        return False
+    if any((not part or len(part) > 256 or part in ('.', '..') or re.search('[\\x00-\\x1f\\x7f]', part) for part in parts)):
+        return False
+    kind = parts[0] if parts else ''
+    if kind == 'main':
+        return len(parts) in (1, 2)
+    if kind == 'workspace':
+        return len(parts) in (1, 3)
+    if kind == 'chat':
+        return len(parts) == 3
+    if kind == 'settings':
+        return len(parts) in (1, 3) or (len(parts) == 4 and parts[3] in ('tasks', 'permissions', 'tools', 'review', 'metadata'))
+    return False
 
 def page_reload_nonce(params):
     values = params.get('_crb_reload', [])
@@ -976,7 +998,7 @@ def handler_factory(app):
                 url = urlsplit(self.path)
                 path, params = (url.path, parse_qs(url.query))
                 reload_nonce = page_reload_nonce(params)
-                if path in ('/', '/lite', '/lite/'):
+                if path in ('/', '/lite', '/lite/') or is_panel_page_path(path):
                     html = (web_root() / 'index.html').read_bytes()
                     return self.lite_asset(page_reload_html(html, reload_nonce), 'text/html; charset=utf-8', force_reload=bool(reload_nonce))
                 if path in ('/lite/app.js', '/lite/question-deck.js', '/lite/requests.js', '/lite/reload.js', '/lite/style.css', '/lite/i18n.js', '/lite/i18n-catalog.js'):

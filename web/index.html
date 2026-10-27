@@ -126,13 +126,13 @@
           <button id="fontToggle" class="secondary" data-icon="Aa" aria-label="字体" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="fontMenu" title="调整字体大小"><span aria-hidden="true">Aa</span> <span>字体</span></button>
         </div>
       </div>
+      <div id="completionNotice" role="status" aria-live="polite" hidden>
+        <span class="completion-notice-icon" aria-hidden="true">✓</span>
+        <button id="completionOpen" type="button"></button>
+        <button id="completionDismiss" type="button" aria-label="关闭完成提示">×</button>
+      </div>
     </header>
 
-    <div id="completionNotice" role="status" aria-live="polite" hidden>
-      <span class="completion-notice-icon" aria-hidden="true">✓</span>
-      <button id="completionOpen" type="button"></button>
-      <button id="completionDismiss" type="button" aria-label="关闭完成提示">×</button>
-    </div>
     <section id="notice" aria-label="待确认请求" hidden></section>
     <section id="timeline" aria-label="对话内容">
       <div class="empty"><div class="empty-icon">◈</div><h2>工作在原来的设备上继续</h2><p>这里显示桌面 App 的原对话、执行过程和回复。</p></div>

@@ -104,6 +104,8 @@ Pending questions stay above the composer. Use Previous/Next and the question co
 
 Open the server URL, sign in with its web credentials, then select application, computer, project and conversation. A workspace groups conversations across sources. Files and terminals operate on the selected computer, not on your phone.
 
+The panel supports bookmarkable addresses: `/main` opens the home view, `/chat/computer-id/chat-id` opens a specific chat, `/workspace` opens the shared workspace, and `/workspace/computer-id/chat-id` opens a workspace chat. Native settings use `/settings/computer-id/chat-id/section`, with `?view=workspace` for workspace context. Copy the address bar rather than entering IDs manually. Back/Forward restores the corresponding view; refresh and a new tab resolve that address after login. Switching reuses the page without sending messages or changing workspace membership. Existing `/` and `/lite` entry points still restore this browser's remembered location. Unsent drafts survive navigation within the same page; a full reload retains the existing unsaved-content warning.
+
 - **“关闭并断开”** (Close and disconnect) stops client-owned bridges and disconnects; it does not delete the original AI Apps or their history.
 - **“关闭窗口时最小化到托盘（保持接入）”** keeps enrollment active when closing the window. Use the explicit disconnect/quit action for full exit. A missing tray cannot be used to maintain a hidden, inaccessible client.
 - Pausing a bridge neither closes the original App nor revokes device authorization.

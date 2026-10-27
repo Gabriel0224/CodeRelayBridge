@@ -360,6 +360,7 @@ main {
   container-type: inline-size;
 }
 header {
+  position: relative;
   width: 100%;
   min-width: 0;
   min-height: 0;
@@ -497,11 +498,16 @@ body:not(.mobile-layout).sidebar-collapsed #sidebarResizer { display: none; }
   backdrop-filter: blur(2px);
 }
 #completionNotice {
-  align-self: flex-start;
+  position: absolute;
+  z-index: 7;
+  top: calc(100% + 12px);
+  right: 30px;
+  width: max-content;
+  max-width: min(640px, calc(100% - 60px));
   display: flex;
   align-items: center;
   gap: 7px;
-  margin: 12px 30px 0;
+  margin: 0;
   border: 1px solid var(--theme-green-315d3c, #315d3c);
   border-radius: 9px;
   background: var(--theme-green-1d3424, #1d3424);
@@ -510,10 +516,10 @@ body:not(.mobile-layout).sidebar-collapsed #sidebarResizer { display: none; }
   box-shadow: 0 8px 24px #0005;
 }
 #completionNotice[hidden] { display: none; }
-.completion-notice-icon { color: var(--theme-green-83d391, #83d391); font-weight: 750; }
+.completion-notice-icon { flex: none; color: var(--theme-green-83d391, #83d391); font-weight: 750; }
 #completionOpen, #completionDismiss { background: transparent; padding: 4px 6px; color: inherit; font-size: max(5px, calc(11px * var(--ui-font-scale))); }
-#completionOpen { text-align: left; }
-#completionDismiss { width: 24px; color: var(--theme-green-8eaa94, #8eaa94); font-size: max(5px, calc(16px * var(--ui-font-scale))); }
+#completionOpen { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
+#completionDismiss { flex: none; margin-left: auto; width: max(28px, calc(26px * var(--ui-font-scale))); min-height: 28px; color: var(--theme-green-8eaa94, #8eaa94); font-size: max(5px, calc(16px * var(--ui-font-scale))); }
 #notice {
   margin: 14px 30px 0;
   border: 1px solid #53483a;
@@ -1971,7 +1977,8 @@ html[data-theme="light"] .mobile-layout .sidebar-close { border-color: var(--the
 .mobile-layout .thread-context-menu > button, .mobile-layout .thread-context-menu > select { min-height: 44px; font-size: max(5px, calc(14px * var(--ui-font-scale))); }
 .mobile-layout #notice { margin: 8px 10px 0; }
 .mobile-layout #notice { max-height: 42vh; }
-.mobile-layout #completionNotice { max-width: calc(100% - 20px); margin: 8px 10px 0; }
+.mobile-layout #completionNotice { top: calc(100% + 8px); right: 10px; max-width: calc(100% - 20px); margin: 0; }
+.mobile-layout #completionDismiss { min-width: 36px; min-height: 36px; }
 .mobile-layout #timeline {
   --timeline-padding-top: 12px;
   padding: var(--timeline-padding-top) 10px 18px;
