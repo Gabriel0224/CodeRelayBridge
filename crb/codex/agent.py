@@ -2691,7 +2691,20 @@ class HostAgent:
         if sys.platform == 'darwin':
             command = ['/usr/bin/open', '-g', uri]
         elif os.name == 'nt':
-            os.startfile(uri)
+            try:
+                self.app_tools.call('navigate_to_codex_page', {'threadId': tid}, tid, timeout=15)
+                return
+            except AppToolsUnavailable:
+                pass
+            except RuntimeError as exc:
+                if str(exc) != 'Unsupported dynamic tool: navigate_to_codex_page':
+                    raise
+            try:
+                os.startfile(uri)
+            except OSError as exc:
+                if getattr(exc, 'winerror', None) == 1312:
+                    raise RuntimeError('CRB 当前的 Windows 登录会话无法打开桌面对话。请从 Windows 桌面快捷方式启动 CRB 后重试，无需重启 Codex。') from exc
+                raise RuntimeError('无法请求目标 Codex Desktop 打开这条对话') from exc
             return
         else:
             opener = shutil.which('xdg-open')

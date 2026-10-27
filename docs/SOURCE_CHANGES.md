@@ -1,5 +1,11 @@
 # Source changes awaiting an installer release
 
+## 0.6.69 Windows conversation attachment repair
+
+- Open existing Codex conversations through the original App's native navigation tool before using the Windows URI handler. Unknown native outcomes are never replayed through a second launcher; unavailable or explicitly unsupported tools retain the URI fallback.
+- Report Windows login-session activation failures with a recovery message. Refuse GUI startup in session 0, including the independent-start flag, while retaining headless workers and diagnostics. Session 0 startup writes its diagnostic and exits instead of waiting on an invisible message box.
+- 修正 Windows 对话接入的登录会话错误；本节修复以新补丁 0.6.69 构建，保留原 App、配对和历史。
+
 ## 0.6.68 deployment build
 
 - Panel addresses restore the selected computer, conversation, workspace and settings category. Direct links, refresh and browser navigation preserve the intended target and page drafts.

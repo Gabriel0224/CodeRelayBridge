@@ -172,18 +172,20 @@ def main():
         except Exception:
             atomic_json(report, {'error': redact(traceback.format_exc())})
             return 1
-    from desktop_client.independent_launch import detach_gui_if_needed
+    from desktop_client.independent_launch import NoInteractiveDesktop, detach_gui_if_needed
     boot_mark('gui.independence.begin')
     try:
         if detach_gui_if_needed():
             return 0
-    except Exception:
+    except Exception as exc:
         from desktop_client.connections import client_root
         from desktop_client.backend import redact
-        from PySide6.QtWidgets import QApplication, QMessageBox
         root = client_root() / 'runtime'
         root.mkdir(parents=True, exist_ok=True)
         (root / 'independent-start-error.log').write_text(redact(traceback.format_exc()), encoding='utf-8')
+        if isinstance(exc, NoInteractiveDesktop):
+            return 1
+        from PySide6.QtWidgets import QApplication, QMessageBox
         app = QApplication.instance() or QApplication(sys.argv)
         QMessageBox.warning(None, 'Relay Client', '客户端独立启动失败，未启动桥接。请查看诊断日志或从桌面快捷方式打开。')
         return 1

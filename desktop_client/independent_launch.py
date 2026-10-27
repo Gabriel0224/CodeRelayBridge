@@ -16,6 +16,13 @@ import psutil
 from desktop_client.backend import ClientError, normalized_path
 BOOTSTRAP_FLAG = '--independent-client-start'
 
+class NoInteractiveDesktop(ClientError):
+    """A GUI must not be mistaken for a desktop client in Windows session 0."""
+
+def require_interactive_desktop():
+    if windows_session_id(os.getpid()) == 0:
+        raise NoInteractiveDesktop('CRB 图形客户端不能在 Windows 会话 0 中启动。请从已登录用户的桌面快捷方式打开；未启动新的桥接。')
+
 def windows_job_member(pid=None, job=None):
     from ctypes import wintypes
     kernel = ctypes.WinDLL('kernel32', use_last_error=True)
@@ -116,8 +123,10 @@ def client_gui_arguments(args):
 
 def launch_client(args, *, env=None):
     args = list(map(str, args))
-    if sys.platform == 'win32' and BOOTSTRAP_FLAG not in args:
-        args.insert(1, BOOTSTRAP_FLAG)
+    if sys.platform == 'win32':
+        require_interactive_desktop()
+        if BOOTSTRAP_FLAG not in args:
+            args.insert(1, BOOTSTRAP_FLAG)
     return launch_independent(args, env=env)
 
 def detach_gui_if_needed():
@@ -125,6 +134,7 @@ def detach_gui_if_needed():
         return False
     if not client_gui_arguments(sys.argv[1:]):
         return False
+    require_interactive_desktop()
     bootstrapped = BOOTSTRAP_FLAG in sys.argv[1:]
     if bootstrapped:
         sys.argv.remove(BOOTSTRAP_FLAG)
