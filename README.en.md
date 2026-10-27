@@ -31,9 +31,9 @@ Platforms are released independently; only changed platforms are uploaded. The t
 
 | Platform | Client | Server |
 | --- | --- | --- |
-| Windows x64 | [v0.6.69 · Setup.exe](https://github.com/Gabriel0224/CodeRelayBridge/releases/download/v0.6.69/RelayClient-0.6.69-Standard-Windows-x64-Setup.exe) | [v0.6.69 · Setup.exe](https://github.com/Gabriel0224/CodeRelayBridge/releases/download/v0.6.69/RelayServer-0.6.69-Standard-Windows-x64-Setup.exe) |
-| Linux x64 (Ubuntu / Mint) | [v0.6.68 · DEB](https://github.com/Gabriel0224/CodeRelayBridge/releases/download/v0.6.68/RelayClient-0.6.68-Standard-Linux-x64.deb) | [v0.6.68 · DEB](https://github.com/Gabriel0224/CodeRelayBridge/releases/download/v0.6.68/RelayServer-0.6.68-Standard-Linux-x64.deb) |
-| macOS 27+ Apple Silicon | [v0.6.68 · DMG](https://github.com/Gabriel0224/CodeRelayBridge/releases/download/v0.6.68/RelayClient-0.6.68-Standard-macOS27-arm64.dmg) | [v0.6.68 · DMG](https://github.com/Gabriel0224/CodeRelayBridge/releases/download/v0.6.68/RelayServer-0.6.68-Standard-macOS27-arm64.dmg) |
+| Windows x64 | [v0.6.70 · Setup.exe](https://github.com/Gabriel0224/CodeRelayBridge/releases/download/v0.6.70/RelayClient-0.6.70-Standard-Windows-x64-Setup.exe) | [v0.6.70 · Setup.exe](https://github.com/Gabriel0224/CodeRelayBridge/releases/download/v0.6.70/RelayServer-0.6.70-Standard-Windows-x64-Setup.exe) |
+| Linux x64 (Ubuntu / Mint) | [v0.6.70 · DEB](https://github.com/Gabriel0224/CodeRelayBridge/releases/download/v0.6.70/RelayClient-0.6.70-Standard-Linux-x64.deb) | [v0.6.70 · DEB](https://github.com/Gabriel0224/CodeRelayBridge/releases/download/v0.6.70/RelayServer-0.6.70-Standard-Linux-x64.deb) |
+| macOS 27+ Apple Silicon | [v0.6.70 · DMG](https://github.com/Gabriel0224/CodeRelayBridge/releases/download/v0.6.70/RelayClient-0.6.70-Standard-macOS27-arm64.dmg) | [v0.6.70 · DMG](https://github.com/Gabriel0224/CodeRelayBridge/releases/download/v0.6.70/RelayServer-0.6.70-Standard-macOS27-arm64.dmg) |
 
 The client and server are separate applications. Complete packages include Python, Qt, and runtime dependencies; Linux may also require system graphical libraries. Install and sign in to the original Codex or DeepSeek Harness desktop app separately.
 

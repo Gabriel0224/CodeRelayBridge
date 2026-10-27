@@ -1,19 +1,19 @@
 # Source changes and installer availability
 
-Published installers: Windows **0.6.69**; Ubuntu / Mint and macOS **0.6.68**. The matching release tags preserve the original accepted build sources. The independent-release tooling and GitHub history-discovery code below are not included in those original installers.
+Published installers: Windows, Ubuntu / Mint and macOS **0.6.70**. The v0.6.70 tag preserves the accepted native build sources. This one-time compatibility bootstrap includes the platform-specific updater for both roles and editions. Later releases upload only changed platforms; each download cell keeps its actual published version.
 
-## 0.6.70 updater compatibility upgrade (awaiting native builds)
+## 0.6.70 updater compatibility upgrade
 
 - Both roles and editions discover their platform-specific newest signed package from the release catalog on GitHub and Gitee, including a pinned or older GitHub Latest badge, independently versioned roles, and paginated catalogs.
 - This one-time updater change affects all three platforms; subsequent releases keep untouched platforms at their actual existing versions.
 - 保留签名、仓库、平台、角色、包哈希及大小校验，未完成查询不冒称无更新。
 
-## Independent platform releases (not packaged)
+## Independent platform releases (included in 0.6.70)
 
 - Collect and sign only explicitly selected changed platforms, while validating both roles and all editions on those platforms. Leave unchanged platforms' versions and published installers intact.
 - Resolve GitHub updates from earlier signed Releases when the newest Release only contains another platform; preserve repository, signature, package and version checks. Catalog reads are bounded; already-current packages do not download signed manifests or installer data.
 - Generate introduction download cells from verified published packages, independently for every platform and role. Retain older Releases that still host any current platform download.
-- 按平台发布并如实显示实际版本；本节是本地源码和发布工具变更，现有安装包、线上部署及正式 Release 尚未更新。
+- 按平台发布并如实显示实际版本；0.6.70 已包含更新器兼容升级，后续仅上传有实际变化的平台。
 
 ## 0.6.69 Windows conversation attachment repair
 
