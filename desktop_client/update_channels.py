@@ -5,7 +5,7 @@ import http.client
 from pathlib import Path
 import time
 from desktop_client import VERSION
-from desktop_client.relay_updates import GitHubHTTP, ReleaseUpdater, UpdateError, UpdateTransportError, UpdateCancelled, MANIFEST_NAME, repository, platform_id, version_tuple, verify_manifest
+from desktop_client.relay_updates import GitHubHTTP, ReleaseUpdater, UpdateError, UpdateTransportError, UpdateCancelled, MANIFEST_NAME, repository, platform_id, version_tuple, verify_manifest, stable_releases
 CHANNELS = ('auto', 'github', 'gitee')
 PROBE_BYTES = 256 * 1024
 PROBE_SECONDS = 3
@@ -55,21 +55,7 @@ def check_gitee(updater):
     """Gitee mirrors the SAME signed repository identity, never a renamed payload."""
     owner, repo = updater.repo.split('/')
     base = 'https://gitee.com/api/v5/repos/' + owner.lower() + '/' + repo
-    releases = updater.http.json(base + '/releases?per_page=20&direction=desc')
-    if not isinstance(releases, list) or len(releases) > 20:
-        raise UpdateError('通道返回了无效的更新元数据。')
-    stable = []
-    for release in releases:
-        if not isinstance(release, dict) or release.get('draft') or release.get('prerelease'):
-            continue
-        try:
-            key = version_tuple(release.get('tag_name'))
-        except UpdateError:
-            continue
-        stable.append((key, release))
-    if not stable:
-        raise UpdateTransportError('仓库尚无正式 Release，或当前账号没有私有仓库读取权限。')
-    for version, release in sorted(stable, key=lambda row: row[0], reverse=True):
+    for version, release in stable_releases(updater.http, base):
         if version <= version_tuple(updater.current):
             return {'available': False, 'current': updater.current, 'latest': updater.current, 'repository': updater.repo, 'channel': 'gitee'}
         ident = release.get('id')

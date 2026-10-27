@@ -8,6 +8,10 @@ Platforms are released independently. The introduction page lists the actual lat
 
 中文：各系统独立发布，只上传有变化的平台。介绍页分别标注各系统客户端、服务端实际已发布的最新版本及下载链接；未变化的平台保留原版本。其他平台仍在使用的最新安装包及其 Release 必须保留。
 
+The 0.6.70 updater reads the release catalog and selects the newest signed package for its own platform, role and edition, independently of GitHub’s global Latest badge. Catalog reads are limited to five pages of twenty releases; incomplete discovery reports an error rather than claiming there is no update.
+
+中文：0.6.70 起，更新器直接读取发布列表，按本机系统、角色和版本类型选择最新的签名安装包，不再依赖 GitHub 的全局 Latest 标记。最多读取五页、每页二十条；超过上限明确提示查询未完成。
+
 ## Install an update / 安装更新
 
 1. Check for updates and review the available version.

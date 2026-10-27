@@ -50,6 +50,32 @@ def version_tuple(value):
         raise UpdateError('版本格式不受支持。')
     return tuple(map(int, match.groups()))
 
+def stable_releases(http, base):
+    """Discover versioned releases without treating a global badge as a catalog."""
+    stable = {}
+    for page in range(1, 6):
+        rows = http.json(base + '/releases?per_page=20&page=' + str(page))
+        if not isinstance(rows, list) or len(rows) > 20:
+            raise UpdateError('通道返回了无效的更新元数据。')
+        for row in rows:
+            if not isinstance(row, dict) or row.get('draft') or row.get('prerelease'):
+                continue
+            try:
+                version = version_tuple(row.get('tag_name'))
+            except UpdateError:
+                continue
+            previous = stable.get(version)
+            if previous is not None and previous != row:
+                raise UpdateError('通道包含重复版本的不同发布，无法确定更新包。')
+            stable[version] = row
+        if len(rows) < 20:
+            break
+    else:
+        raise UpdateTransportError('已达到更新历史读取上限，请从介绍页选择本系统的最新版，或使用另一更新通道。')
+    if not stable:
+        raise UpdateTransportError('仓库尚无正式 Release，或当前账号没有私有仓库读取权限。')
+    return sorted(stable.items(), reverse=True)
+
 def platform_id():
     machine = platform.machine().lower()
     if sys.platform == 'win32' and machine in ('amd64', 'x86_64'):
@@ -345,32 +371,10 @@ class ReleaseUpdater:
         if self.channel == 'gitee':
             from desktop_client.update_channels import check_gitee
             return check_gitee(self)
-        release = self.http.json('https://api.github.com/repos/' + self.repo + '/releases/latest')
-        result = self._check_github_release(release)
-        if result is not None:
-            return result
-        base = 'https://api.github.com/repos/' + self.repo + '/releases'
-        seen = {version_tuple(release['tag_name'])}
-        stable = []
-        for page in range(1, 6):
-            releases = self.http.json(base + '?per_page=20&page=' + str(page))
-            if not isinstance(releases, list) or len(releases) > 20:
-                raise UpdateError('通道返回了无效的更新元数据。')
-            for row in releases:
-                if not isinstance(row, dict) or row.get('draft') or row.get('prerelease'):
-                    continue
-                try:
-                    version = version_tuple(row.get('tag_name'))
-                except UpdateError:
-                    continue
-                if version not in seen and version > version_tuple(self.current):
-                    stable.append((version, row))
-                    seen.add(version)
-            if len(releases) < 20:
+        base = 'https://api.github.com/repos/' + self.repo
+        for version, row in stable_releases(self.http, base):
+            if version <= version_tuple(self.current):
                 break
-        else:
-            raise UpdateTransportError('已达到更新历史读取上限，请从介绍页选择本系统的最新版，或使用另一更新通道。')
-        for version, row in sorted(stable, key=lambda item: item[0], reverse=True):
             result = self._check_github_release(row)
             if result is not None:
                 return result
