@@ -27,13 +27,13 @@
 
 [GitHub 发行版](https://github.com/Gabriel0224/CodeRelayBridge/releases)
 
-按系统下载对应角色的最新安装包。各平台可独立更新，下表分别标明客户端和服务端的版本；无需从其他平台的发行版中查找。
+各系统独立发布，只上传有变化的平台。下表分别标明每个系统客户端和服务端实际已发布的最新版本，下载链接直接指向对应安装包；未变化的平台保留原版本。
 
 | 平台 | 客户端 | 服务端 |
 | --- | --- | --- |
-| Windows x64 | [v0.6.66 · Setup.exe](https://github.com/Gabriel0224/CodeRelayBridge/releases/download/v0.6.66/RelayClient-0.6.66-Standard-Windows-x64-Setup.exe) | [v0.6.66 · Setup.exe](https://github.com/Gabriel0224/CodeRelayBridge/releases/download/v0.6.66/RelayServer-0.6.66-Standard-Windows-x64-Setup.exe) |
-| Linux x64（Ubuntu / Mint） | [v0.6.66 · DEB](https://github.com/Gabriel0224/CodeRelayBridge/releases/download/v0.6.66/RelayClient-0.6.66-Standard-Linux-x64.deb) | [v0.6.66 · DEB](https://github.com/Gabriel0224/CodeRelayBridge/releases/download/v0.6.66/RelayServer-0.6.66-Standard-Linux-x64.deb) |
-| macOS 27+ Apple Silicon | [v0.6.66 · DMG](https://github.com/Gabriel0224/CodeRelayBridge/releases/download/v0.6.66/RelayClient-0.6.66-Standard-macOS27-arm64.dmg) | [v0.6.66 · DMG](https://github.com/Gabriel0224/CodeRelayBridge/releases/download/v0.6.66/RelayServer-0.6.66-Standard-macOS27-arm64.dmg) |
+| Windows x64 | [v0.6.69 · Setup.exe](https://github.com/Gabriel0224/CodeRelayBridge/releases/download/v0.6.69/RelayClient-0.6.69-Standard-Windows-x64-Setup.exe) | [v0.6.69 · Setup.exe](https://github.com/Gabriel0224/CodeRelayBridge/releases/download/v0.6.69/RelayServer-0.6.69-Standard-Windows-x64-Setup.exe) |
+| Linux x64（Ubuntu / Mint） | [v0.6.68 · DEB](https://github.com/Gabriel0224/CodeRelayBridge/releases/download/v0.6.68/RelayClient-0.6.68-Standard-Linux-x64.deb) | [v0.6.68 · DEB](https://github.com/Gabriel0224/CodeRelayBridge/releases/download/v0.6.68/RelayServer-0.6.68-Standard-Linux-x64.deb) |
+| macOS 27+ Apple Silicon | [v0.6.68 · DMG](https://github.com/Gabriel0224/CodeRelayBridge/releases/download/v0.6.68/RelayClient-0.6.68-Standard-macOS27-arm64.dmg) | [v0.6.68 · DMG](https://github.com/Gabriel0224/CodeRelayBridge/releases/download/v0.6.68/RelayServer-0.6.68-Standard-macOS27-arm64.dmg) |
 
 客户端和服务端是独立程序。完整安装包包含 Python、Qt 和运行依赖；Linux 可能还需要系统图形库。原 Codex／DeepSeek Harness 桌面应用需另外安装并登录。
 

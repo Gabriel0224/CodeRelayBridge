@@ -1,6 +1,67 @@
 """Render a host-specific introduction; runtime sources stay on shared main."""
 import re
 
+def latest_published_packages(records, edition):
+    """Select each platform/role independently from verified publication receipts."""
+    if edition not in ('standard',):
+        raise ValueError('Unknown package edition')
+    selected = {}
+    for row in records:
+        if row.get('edition') != edition:
+            continue
+        if row.get('published') is not True or row.get('verified') is not True:
+            raise ValueError('Download tables require verified, published packages')
+        version, platform, role = (row['version'], row['platform'], row['role'])
+        extensions = {'Windows-x64': 'Windows-x64-Setup.exe', 'Linux-x64': 'Linux-x64.deb', 'macOS-arm64': 'macOS27-arm64.dmg'}
+        if not isinstance(version, str) or not re.fullmatch('[0-9]+\\.[0-9]+\\.[0-9]+', version) or platform not in extensions or (role not in ('client', 'server')) or (row.get('tag') != 'v' + version):
+            raise ValueError('Invalid published package identity')
+        expected = f'Relay{role.capitalize()}-{version}-{edition.capitalize()}-{extensions[platform]}'
+        if row['file'] != expected:
+            raise ValueError('Published installer filename does not match its version/platform/role')
+        key = (platform, role)
+        number = tuple(map(int, version.split('.')))
+        previous = selected.get(key)
+        if previous is None or number > tuple(map(int, previous['version'].split('.'))):
+            selected[key] = dict(row)
+    expected = {(platform, role) for platform in ('Windows-x64', 'Linux-x64', 'macOS-arm64') for role in ('client', 'server')}
+    if set(selected) != expected:
+        raise ValueError('Missing verified downloads for a platform/role')
+    return selected
+
+def superseded_release_tags(records, edition):
+    """A Release can be removed only when no platform/role still needs it."""
+    selected = latest_published_packages(records, edition)
+    required = {row['tag'] for row in selected.values()}
+    known = {row['tag'] for row in records if row.get('edition') == edition}
+    return sorted(known - required, key=lambda tag: tuple(map(int, tag[1:].split('.'))))
+
+def update_downloads(text, provider, repository, records):
+    """Update only the six download cells, keeping each actual published version."""
+    edition = 'standard'
+    selected = latest_published_packages(records, edition)
+    host = 'https://github.com/Gabriel0224/' if provider == 'github' else 'https://gitee.com/gabriel0224/'
+    platforms = {'Windows x64': 'Windows-x64', 'Linux x64（Ubuntu / Mint）': 'Linux-x64', 'Linux x64 (Ubuntu / Mint)': 'Linux-x64', 'macOS 27+ Apple Silicon': 'macOS-arm64'}
+    labels = {'Windows-x64': 'Setup.exe', 'Linux-x64': 'DEB', 'macOS-arm64': 'DMG'}
+    seen = set()
+
+    def replace(match):
+        label = match[1]
+        platform = platforms[label]
+        if platform in seen:
+            raise ValueError('Duplicate platform row in the download table')
+        seen.add(platform)
+        cells = []
+        for role in ('client', 'server'):
+            row = selected[platform, role]
+            url = host + repository + '/releases/download/' + row['tag'] + '/' + row['file']
+            cells.append(f"[v{row['version']} · {labels[platform]}]({url})")
+        return '| ' + label + ' | ' + ' | '.join(cells) + ' |'
+    pattern = '^\\| (' + '|'.join((re.escape(label) for label in platforms)) + ') \\|[^\\n]*$'
+    result = re.sub(pattern, replace, text, flags=re.M)
+    if len(seen) != 3:
+        raise ValueError('Missing platform row in the download table')
+    return result
+
 def render(text, provider, repository):
     if provider not in ('github', 'gitee') or not re.fullmatch('[A-Za-z0-9_.-]{1,100}', repository):
         raise ValueError('Unknown repository presentation')

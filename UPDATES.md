@@ -2,7 +2,11 @@
 
 Select **Check for CRB updates / 检查 CRB 更新** in the native client or server. The updater selects the package matching your operating system, program role and edition.
 
-Standard packages are available from [CodeRelayBridge](https://github.com/Gabriel0224/CodeRelayBridge/releases/latest). Cockpit packages are available from the private [CodeRelayBridge-Cockpit](https://github.com/Gabriel0224/CodeRelayBridge-Cockpit/releases/latest) repository.
+Standard packages are available from [CodeRelayBridge](https://github.com/Gabriel0224/CodeRelayBridge/releases). Cockpit packages are available from the private [CodeRelayBridge-Cockpit](https://github.com/Gabriel0224/CodeRelayBridge-Cockpit/releases) repository.
+
+Platforms are released independently. The introduction page lists the actual latest published client and server installers for each platform; another platform's newer version does not change those versions. Only changed platforms are uploaded. Keep any older Release that still provides a platform's latest verified package.
+
+中文：各系统独立发布，只上传有变化的平台。介绍页分别标注各系统客户端、服务端实际已发布的最新版本及下载链接；未变化的平台保留原版本。其他平台仍在使用的最新安装包及其 Release 必须保留。
 
 ## Install an update / 安装更新
 

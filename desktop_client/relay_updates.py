@@ -194,7 +194,7 @@ def verify_manifest(envelope, expected_repo, verification_key=VERIFICATION_KEY):
         seen = set()
         for item in payload['packages']:
             name = item['file']
-            if not isinstance(name, str) or not re.fullmatch('[A-Za-z0-9._-]+', name) or (not re.fullmatch('[0-9a-f]{64}', item['sha256'])) or (type(item['bytes']) is not int) or (not 0 < item['bytes'] <= MAX_ARCHIVE) or (item['version'] != payload['version']) or (name in seen) or (repository(item['role'], item['edition']) != expected_repo):
+            if not isinstance(name, str) or not re.fullmatch('[A-Za-z0-9._-]+', name) or (not re.fullmatch('[0-9a-f]{64}', item['sha256'])) or (type(item['bytes']) is not int) or (not 0 < item['bytes'] <= MAX_ARCHIVE) or (item['version'] != payload['version']) or (name in seen) or (item['platform'] not in ('Windows-x64', 'Linux-x64', 'macOS-arm64')) or (repository(item['role'], item['edition']) != expected_repo):
                 raise ValueError()
             seen.add(name)
         return payload
@@ -346,6 +346,37 @@ class ReleaseUpdater:
             from desktop_client.update_channels import check_gitee
             return check_gitee(self)
         release = self.http.json('https://api.github.com/repos/' + self.repo + '/releases/latest')
+        result = self._check_github_release(release)
+        if result is not None:
+            return result
+        base = 'https://api.github.com/repos/' + self.repo + '/releases'
+        seen = {version_tuple(release['tag_name'])}
+        stable = []
+        for page in range(1, 6):
+            releases = self.http.json(base + '?per_page=20&page=' + str(page))
+            if not isinstance(releases, list) or len(releases) > 20:
+                raise UpdateError('通道返回了无效的更新元数据。')
+            for row in releases:
+                if not isinstance(row, dict) or row.get('draft') or row.get('prerelease'):
+                    continue
+                try:
+                    version = version_tuple(row.get('tag_name'))
+                except UpdateError:
+                    continue
+                if version not in seen and version > version_tuple(self.current):
+                    stable.append((version, row))
+                    seen.add(version)
+            if len(releases) < 20:
+                break
+        else:
+            raise UpdateTransportError('已达到更新历史读取上限，请从介绍页选择本系统的最新版，或使用另一更新通道。')
+        for version, row in sorted(stable, key=lambda item: item[0], reverse=True):
+            result = self._check_github_release(row)
+            if result is not None:
+                return result
+        return {'available': False, 'current': self.current, 'latest': self.current, 'repository': self.repo, 'channel': 'github'}
+
+    def _check_github_release(self, release):
         if release.get('draft') or release.get('prerelease'):
             raise UpdateError('不自动安装草稿或预发布版本。')
         if version_tuple(release.get('tag_name')) <= version_tuple(self.current):
@@ -363,6 +394,8 @@ class ReleaseUpdater:
         if version_tuple(payload['version']) != version_tuple(release['tag_name']):
             raise UpdateError('更新清单版本与 Release 不一致。')
         candidates = [row for row in payload['packages'] if row['role'] == self.role and row['edition'] == self.edition and (row['platform'] == platform_id())]
+        if not candidates:
+            return None
         if len(candidates) != 1:
             raise UpdateError('Release 缺少当前系统与版本类型的唯一原生包。')
         package = candidates[0]

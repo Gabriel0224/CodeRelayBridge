@@ -51,10 +51,39 @@ def inspect_bundle(executable, edition, version):
         raise RuntimeError('Ordinary/universal executable unexpectedly includes local optional provider implementation')
     return {'compiledVersionMatches': True, 'compiledEditionPayloadMatches': True, 'developmentTestsExcluded': True, 'freshDefaultAddressEmpty': True, 'optionalImplementationModules': sorted(optional)}
 
-def validate_release(records, version):
+def selected_platforms(platforms=None):
+    supported = policy()['platforms']
+    if platforms is None:
+        return supported
+    if not isinstance(platforms, (list, tuple)) or not platforms or any((platform not in supported for platform in platforms)) or (len(set(platforms)) != len(platforms)):
+        raise RuntimeError('Select a nonempty, unique set of supported release platforms')
+    return [platform for platform in supported if platform in platforms]
+
+def release_records(root, platforms=None):
+    """Read only explicitly selected native verification reports."""
+    names = {'Windows-x64': 'windows', 'Linux-x64': 'mint', 'macOS-arm64': 'mac'}
+    records = []
+    for platform in selected_platforms(platforms):
+        report = json.loads((Path(root) / ('verification-' + names[platform] + '.json')).read_text(encoding='utf-8'))
+        rows = report['packages']
+        if not rows or any((row['platform'] != platform for row in rows)):
+            raise RuntimeError('Verification report does not match its selected platform')
+        records.extend(rows)
+    return records
+
+def validate_release(records, version, platforms=None):
+    platforms = selected_platforms(platforms)
     validate_installer_formats(records)
-    expected = {(platform, role, 'standard') for platform in policy()['platforms'] for role in ('client', 'server')}
-    actual = {(r['platform'], r['role'], r['edition']) for r in records}
-    if actual != expected or len(records) != len(expected) or any((r['version'] != version for r in records)):
-        raise RuntimeError('Incomplete Standard release matrix')
-    return {'completeMatrix': True, 'clientsPerPlatform': 1, 'serversPerPlatform': 1}
+    expected = {(platform, role, edition) for platform in platforms for role, _, edition in PLANS}
+    actual = {(item['platform'], item['role'], item['edition']) for item in records}
+    if actual != expected or len(records) != len(expected):
+        raise RuntimeError(f'Incomplete release matrix: missing={sorted(expected - actual)}, unexpected={sorted(actual - expected)}')
+    for item in records:
+        if item['version'] != version:
+            raise RuntimeError('All selected editions must share the same release version')
+    for platform in platforms:
+        clients = [item for item in records if item['platform'] == platform and item['role'] == 'client']
+        hashes = [item['bridgeSourceHashes'] for item in clients]
+        if not hashes[0] or any((value != hashes[0] for value in hashes[1:])):
+            raise RuntimeError(f'{platform}: non-optional provider bridge sources differ between editions')
+    return {'completeMatrix': True, 'platforms': platforms, 'clientsPerPlatform': sum((role == 'client' for role, _, _ in PLANS)), 'serversPerPlatform': sum((role == 'server' for role, _, _ in PLANS))}

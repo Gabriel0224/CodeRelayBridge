@@ -13,7 +13,7 @@ import zipfile
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 from desktop_client import VERSION
-from release_tools.release_matrix import PLANS, LABELS, bridge_hashes, inspect_bundle, package_name, policy, validate_release
+from release_tools.release_matrix import PLANS, LABELS, bridge_hashes, inspect_bundle, package_name, policy, validate_release, release_records
 SUPPORT = ROOT / 'release_tools'
 DEFAULT_OUTPUT = ROOT.parent / ('Relay安装包-v' + VERSION)
 
@@ -157,11 +157,9 @@ def native(output):
     name = 'mac' if sys.platform == 'darwin' else 'mint'
     (output / ('verification-' + name + '.json')).write_text(json.dumps({'version': VERSION, 'packages': namespace['results']}, indent=2), encoding='utf-8')
 
-def collect(output):
-    records = []
-    for platform in ('windows', 'mint', 'mac'):
-        records += json.loads((output / ('verification-' + platform + '.json')).read_text(encoding='utf-8'))['packages']
-    audit = validate_release(records, VERSION)
+def collect(output, platforms=None):
+    records = release_records(output, platforms)
+    audit = validate_release(records, VERSION, platforms)
     artifacts = [item for record in records for item in ([record, record['legacyUpdate']] if record.get('legacyUpdate') else [record])]
     files = sorted((p for p in output.iterdir() if p.name.startswith(('RelayClient-', 'RelayServer-')) and p.name.endswith(('.exe', '.deb', '.zip', '.dmg', '.tar.gz'))))
     assert {p.name for p in files} == {item['file'] for item in artifacts}, [p.name for p in files]
@@ -178,10 +176,13 @@ if __name__ == '__main__':
     parser.add_argument('command', choices=['local', 'collect'])
     parser.add_argument('--output', type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument('--client-only', action='store_true')
+    parser.add_argument('--platform', action='append', choices=policy()['platforms'], help='Platform to collect; repeat for multiple changed platforms. Default: full matrix.')
     args = parser.parse_args()
+    if args.platform and args.command != 'collect':
+        parser.error('--platform applies to collect; local already builds for the current platform')
     if args.command == 'local' and sys.platform == 'win32':
         windows(args.output, client_only=args.client_only)
     elif args.command == 'collect':
-        collect(args.output)
+        collect(args.output, args.platform)
     else:
         native(args.output)

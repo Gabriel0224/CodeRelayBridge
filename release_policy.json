@@ -1,5 +1,5 @@
 {
-  "schema": 3,
+  "schema": 4,
   "requestedAt": "2026-10-13",
   "clientEditions": [
     "standard"
@@ -18,6 +18,12 @@
   "sharedNonCockpitSources": true,
   "synchronizeNonCockpitChanges": true,
   "packageAllEditionsTogether": true,
+  "editionMatrixScope": "selected-platforms",
+  "releaseChangedPlatformsOnly": true,
+  "platformVersionsIndependent": true,
+  "preserveUnchangedPlatformVersions": true,
+  "readmeVersionsFromVerifiedPublishedPackages": true,
+  "giteeRetainLatestPerPlatformRoleEdition": true,
   "credentialsBundled": false,
   "standardSourceIndependent": true,
   "standardServerCockpitCompatibility": false,
