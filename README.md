@@ -35,9 +35,9 @@
 
 | 平台 | 客户端 | 服务端 |
 | --- | --- | --- |
-| Windows x64 | [v0.6.74 · Setup.exe](https://github.com/Gabriel0224/CodeRelayBridge/releases/download/v0.6.74/RelayClient-0.6.74-Standard-Windows-x64-Setup.exe) | [v0.6.74 · Setup.exe](https://github.com/Gabriel0224/CodeRelayBridge/releases/download/v0.6.74/RelayServer-0.6.74-Standard-Windows-x64-Setup.exe) |
-| Linux x64（Ubuntu / Mint） | [v0.6.74 · DEB](https://github.com/Gabriel0224/CodeRelayBridge/releases/download/v0.6.74/RelayClient-0.6.74-Standard-Linux-x64.deb) | [v0.6.74 · DEB](https://github.com/Gabriel0224/CodeRelayBridge/releases/download/v0.6.74/RelayServer-0.6.74-Standard-Linux-x64.deb) |
-| macOS 27+ Apple Silicon | [v0.6.74 · DMG](https://github.com/Gabriel0224/CodeRelayBridge/releases/download/v0.6.74/RelayClient-0.6.74-Standard-macOS27-arm64.dmg) | [v0.6.74 · DMG](https://github.com/Gabriel0224/CodeRelayBridge/releases/download/v0.6.74/RelayServer-0.6.74-Standard-macOS27-arm64.dmg) |
+| Windows x64 | [v0.6.75 · Setup.exe](https://github.com/Gabriel0224/CodeRelayBridge/releases/download/v0.6.75/RelayClient-0.6.75-Standard-Windows-x64-Setup.exe) | [v0.6.75 · Setup.exe](https://github.com/Gabriel0224/CodeRelayBridge/releases/download/v0.6.75/RelayServer-0.6.75-Standard-Windows-x64-Setup.exe) |
+| Linux x64（Ubuntu / Mint） | [v0.6.75 · DEB](https://github.com/Gabriel0224/CodeRelayBridge/releases/download/v0.6.75/RelayClient-0.6.75-Standard-Linux-x64.deb) | [v0.6.75 · DEB](https://github.com/Gabriel0224/CodeRelayBridge/releases/download/v0.6.75/RelayServer-0.6.75-Standard-Linux-x64.deb) |
+| macOS 27+ Apple Silicon | [v0.6.75 · DMG](https://github.com/Gabriel0224/CodeRelayBridge/releases/download/v0.6.75/RelayClient-0.6.75-Standard-macOS27-arm64.dmg) | [v0.6.75 · DMG](https://github.com/Gabriel0224/CodeRelayBridge/releases/download/v0.6.75/RelayServer-0.6.75-Standard-macOS27-arm64.dmg) |
 
 客户端和服务端是独立程序。完整安装包包含 Python、Qt 和运行依赖；Linux 可能还需要系统图形库。原 Codex／DeepSeek Harness 桌面应用需另外安装并登录。
 
