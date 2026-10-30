@@ -209,11 +209,13 @@
         <button id="terminalPanelClose" class="quiet" type="button" aria-label="收起终端栏" title="收起终端栏">×</button>
       </div>
     </div>
-    <button id="localPreviewToggle" class="secondary local-preview-entry" type="button">本地网页</button>
-    <div class="terminal-mode-tabs" role="tablist" aria-label="终端与文件">
-      <button id="terminalModeTerminal" type="button" role="tab" aria-selected="true">终端</button>
-      <button id="terminalModeFiles" type="button" role="tab" aria-selected="false">文件</button>
-      <button id="terminalModeAgents" type="button" role="tab" aria-selected="false">子智能体</button>
+    <div class="terminal-mode-tabs">
+      <div class="terminal-view-tabs" role="tablist" aria-label="终端与文件">
+        <button id="terminalModeTerminal" type="button" role="tab" aria-selected="true">终端</button>
+        <button id="terminalModeFiles" type="button" role="tab" aria-selected="false">文件</button>
+        <button id="terminalModeAgents" type="button" role="tab" aria-selected="false">子智能体</button>
+      </div>
+      <button id="localPreviewToggle" type="button" aria-controls="filePreviewDialog">本地网页</button>
     </div>
     <div id="subagentPanel" hidden>
       <div class="subagent-toolbar">

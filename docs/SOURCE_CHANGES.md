@@ -2,6 +2,10 @@
 
 Published installers: Windows, Ubuntu / Mint and macOS **0.6.74**. The v0.6.74 tag preserves the accepted native build sources, including shared Office editing, local web forwarding and unified preview tabs. Later releases upload only changed platforms; each download cell keeps its actual published version.
 
+## 0.6.75 Local web shortcut in the extension row
+
+Place Local web alongside Terminal, Files and Subagents using the same button styling. Keep the controls on one row, with horizontal scrolling in narrow panes or at large font sizes. The shortcut continues to open the shared preview.
+
 ## 0.6.74 Desktop project identity and shared web/file preview tabs
 
 - Prefer the Desktop App's explicit chat memberships and project ID mapping over shared-folder guesses. Honor projectless chats; ambiguous legacy roots stay unclassified instead of borrowing the first project.
