@@ -283,8 +283,8 @@
       "exportSha256": "b3e2d8c42763030deccb2df00f18ca252bec9792098fefcaa4c34300af299a33"
     },
     "desktop_client/__init__.py": {
-      "canonicalSha256": "fc3fdaa109dccbed9c2e8730b77318f5e502a3e03020ed97f940201cd3e0bd39",
-      "exportSha256": "f61504eccdb8236df90ebfb4ce7caa498365f8addbd43238213f4124d9e2711d"
+      "canonicalSha256": "c7e63c6693b3cc77e3179f551ea2b8806e6685a6bc15aaaed3a3bd8d234d605f",
+      "exportSha256": "3d28cdb40e3d4447ed9e410084b13fd7035b7316d594e258d10b8926c575a819"
     },
     "desktop_client/acceptance.py": {
       "canonicalSha256": "89dee34346aa1d650e9aeeb009c77c972108009e2e3a4678c3e5cf00e1fe320c",
@@ -575,8 +575,8 @@
       "exportSha256": "23b7da01925d23b9526f2cc15c858d2501d60b32f53dcb6d7feef7e2e418221f"
     },
     "docs/SOURCE_CHANGES.md": {
-      "canonicalSha256": "ce54bc38ba324512bdb795e63b52a085e6b3e96931cf9dbbce7e39aa5c17c9c9",
-      "exportSha256": "ce54bc38ba324512bdb795e63b52a085e6b3e96931cf9dbbce7e39aa5c17c9c9"
+      "canonicalSha256": "20debf03285a4592e2529a315bcfadb99ed607bc4073f1da33779f37705dec29",
+      "exportSha256": "20debf03285a4592e2529a315bcfadb99ed607bc4073f1da33779f37705dec29"
     },
     "docs/USER_GUIDE.en.md": {
       "canonicalSha256": "273463aaf696fcf5907e3f07ce9b160dcfb3abb842926ebcd5841742150d635a",
@@ -719,8 +719,8 @@
       "exportSha256": "66c0a4187915abc7c1e204f8fc529cf28481649d7045fcc03bf18d822118cb13"
     },
     "web/style.css": {
-      "canonicalSha256": "57d78c9c65b0b34ecb0bed88f81064646133823a795f260265b508ba92472d3f",
-      "exportSha256": "dd33a914c47cb6241a119a64bbac247a3d14a2f5d39c5e3db884f6ec341fc04a"
+      "canonicalSha256": "98deb82850f0858824418dd51f46a80f7374d85740e05ff9d9a47135a7c1a9ca",
+      "exportSha256": "387808e47fb55dbc991f83e5535025670c0e9bca6e5970b08c3b2dbe2dcd72e0"
     },
     "web/vendor/katex/LICENSE": {
       "canonicalSha256": "766ccc1f306c885aa45542a9846bbd0a505b27a0374f146778171c2254ce18e3",

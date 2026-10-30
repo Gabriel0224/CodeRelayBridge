@@ -2,6 +2,10 @@
 
 Published installers: Windows, Ubuntu / Mint and macOS **0.6.75**. The v0.6.75 tag preserves the accepted native build sources, including the unified extension row. Later releases upload only changed platforms; each download cell keeps its actual published version.
 
+## 0.6.76 Reasoning summaries follow the selected palette
+
+Use the current palette for the reasoning summary background, border and heading, with the normal readable text color in both light and dark modes. Quota and error notices keep their semantic colors.
+
 ## 0.6.75 Local web shortcut in the extension row
 
 Place Local web alongside Terminal, Files and Subagents using the same button styling. Keep the controls on one row, with horizontal scrolling in narrow panes or at large font sizes. The shortcut continues to open the shared preview.
