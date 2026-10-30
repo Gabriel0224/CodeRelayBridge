@@ -1,6 +1,6 @@
 # Source changes and installer availability
 
-Published installers: Windows, Ubuntu / Mint and macOS **0.6.70**. The v0.6.70 tag preserves the accepted native build sources. This one-time compatibility bootstrap includes the platform-specific updater for both roles and editions. Later releases upload only changed platforms; each download cell keeps its actual published version.
+Published installers: Windows, Ubuntu / Mint and macOS **0.6.74**. The v0.6.74 tag preserves the accepted native build sources, including shared Office editing, local web forwarding and unified preview tabs. Later releases upload only changed platforms; each download cell keeps its actual published version.
 
 ## 0.6.74 Desktop project identity and shared web/file preview tabs
 
