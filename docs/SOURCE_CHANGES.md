@@ -1,6 +1,6 @@
 # Source changes and installer availability
 
-Published installers: Windows, Ubuntu / Mint and macOS **0.6.75**. The v0.6.75 tag preserves the accepted native build sources, including the unified extension row. Later releases upload only changed platforms; each download cell keeps its actual published version.
+Published installers: Windows and Ubuntu / Mint **0.6.76**; macOS **0.6.75**. The v0.6.76 tag preserves the accepted native sources for the reasoning-summary palette correction. Mac is currently offline and retains its verified v0.6.75 installers. Each download cell keeps its actual published version.
 
 ## 0.6.76 Reasoning summaries follow the selected palette
 

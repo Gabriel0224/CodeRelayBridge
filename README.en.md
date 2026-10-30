@@ -25,7 +25,7 @@ Available actions depend on the capabilities of each desktop app.
 
 New in 0.6.74: install and manage a shared ONLYOFFICE Docs component from the server UI; connected clients can edit Word, Excel and PowerPoint files and save back to the selected computer. See [document editing setup](docs/DOCUMENT_EDITING.md).
 
-New in 0.6.74: [local web previews](docs/LOCAL_WEB_PREVIEW.md) forward a target client’s localhost dashboards, live logs and charts. This is not included in current installers.
+New in 0.6.74: [local web previews](docs/LOCAL_WEB_PREVIEW.md) forward a target client’s localhost dashboards, live logs and charts.
 
 ## Downloads and requirements
 
@@ -35,8 +35,8 @@ Platforms are released independently; only changed platforms are uploaded. The t
 
 | Platform | Client | Server |
 | --- | --- | --- |
-| Windows x64 | [v0.6.75 · Setup.exe](https://github.com/Gabriel0224/CodeRelayBridge/releases/download/v0.6.75/RelayClient-0.6.75-Standard-Windows-x64-Setup.exe) | [v0.6.75 · Setup.exe](https://github.com/Gabriel0224/CodeRelayBridge/releases/download/v0.6.75/RelayServer-0.6.75-Standard-Windows-x64-Setup.exe) |
-| Linux x64 (Ubuntu / Mint) | [v0.6.75 · DEB](https://github.com/Gabriel0224/CodeRelayBridge/releases/download/v0.6.75/RelayClient-0.6.75-Standard-Linux-x64.deb) | [v0.6.75 · DEB](https://github.com/Gabriel0224/CodeRelayBridge/releases/download/v0.6.75/RelayServer-0.6.75-Standard-Linux-x64.deb) |
+| Windows x64 | [v0.6.76 · Setup.exe](https://github.com/Gabriel0224/CodeRelayBridge/releases/download/v0.6.76/RelayClient-0.6.76-Standard-Windows-x64-Setup.exe) | [v0.6.76 · Setup.exe](https://github.com/Gabriel0224/CodeRelayBridge/releases/download/v0.6.76/RelayServer-0.6.76-Standard-Windows-x64-Setup.exe) |
+| Linux x64 (Ubuntu / Mint) | [v0.6.76 · DEB](https://github.com/Gabriel0224/CodeRelayBridge/releases/download/v0.6.76/RelayClient-0.6.76-Standard-Linux-x64.deb) | [v0.6.76 · DEB](https://github.com/Gabriel0224/CodeRelayBridge/releases/download/v0.6.76/RelayServer-0.6.76-Standard-Linux-x64.deb) |
 | macOS 27+ Apple Silicon | [v0.6.75 · DMG](https://github.com/Gabriel0224/CodeRelayBridge/releases/download/v0.6.75/RelayClient-0.6.75-Standard-macOS27-arm64.dmg) | [v0.6.75 · DMG](https://github.com/Gabriel0224/CodeRelayBridge/releases/download/v0.6.75/RelayServer-0.6.75-Standard-macOS27-arm64.dmg) |
 
 The client and server are separate applications. Complete packages include Python, Qt, and runtime dependencies; Linux may also require system graphical libraries. Install and sign in to the original Codex or DeepSeek Harness desktop app separately.
