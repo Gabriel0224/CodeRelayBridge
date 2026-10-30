@@ -17,6 +17,8 @@
   <script src="/lite/requests.js" defer></script>
   <script src="/lite/i18n-catalog.js" defer></script>
   <script src="/lite/i18n.js" defer></script>
+  <script src="/lite/office-editor.js" defer></script>
+  <script src="/lite/local-preview.js" defer></script>
   <script src="/lite/app.js" defer></script>
   <script src="/lite/vendor/native-ui.js" defer></script>
   <script src="/lite/vendor/sidebar-ui.js" defer></script>
@@ -207,6 +209,7 @@
         <button id="terminalPanelClose" class="quiet" type="button" aria-label="收起终端栏" title="收起终端栏">×</button>
       </div>
     </div>
+    <button id="localPreviewToggle" class="secondary local-preview-entry" type="button">本地网页</button>
     <div class="terminal-mode-tabs" role="tablist" aria-label="终端与文件">
       <button id="terminalModeTerminal" type="button" role="tab" aria-selected="true">终端</button>
       <button id="terminalModeFiles" type="button" role="tab" aria-selected="false">文件</button>
@@ -356,14 +359,28 @@
           <input id="filePreviewFontSize" type="range" min="5" max="32" step="1" value="13" aria-label="预览字体大小">
           <output id="filePreviewFontValue" for="filePreviewFontSize">13px</output>
         </label>
+        <button id="filePreviewWeb" class="secondary" type="button">本地网页</button>
+        <button id="filePreviewSplit" class="secondary" type="button">并排查看</button>
+        <span id="localPreviewActions" class="local-preview-actions" hidden>
+          <button id="localPreviewReload" class="secondary" type="button" disabled>刷新重连</button>
+          <button id="localPreviewWindow" class="secondary" type="button" disabled>独立窗口</button>
+        </span>
         <button id="filePreviewDownload" class="secondary" type="button">下载</button>
         <button id="filePreviewEdit" class="secondary" type="button" hidden>编辑</button>
+        <button id="filePreviewOfficeSave" class="secondary" type="button" hidden>保存到目标机</button>
+        <button id="filePreviewOfficeRecovery" class="secondary" type="button" hidden>下载编辑副本</button>
+        <button id="filePreviewOfficeRetain" class="secondary" type="button" hidden>保留副本并关闭</button>
         <button id="filePreviewAnnotation" class="secondary" type="button" hidden>批注所选文本</button>
         <button id="filePreviewAttach" class="secondary" type="button" hidden>加入对话</button>
         <button id="filePreviewClose" class="quiet" type="button" aria-label="关闭预览">×</button>
       </div>
     </div>
-    <div id="filePreviewTabs" class="file-preview-tabs" role="tablist" aria-label="已打开的文件"></div>
+    <form id="localPreviewForm" class="local-preview-form" hidden>
+      <select id="localPreviewHost" aria-label="本地网页所在电脑"></select>
+      <input id="localPreviewUrl" type="text" inputmode="url" placeholder="http://127.0.0.1:3000" aria-label="目标电脑的本机网页地址" required>
+      <button type="submit">打开</button>
+    </form>
+    <div id="filePreviewTabs" class="file-preview-tabs" role="tablist" aria-label="已打开的文件和网页"></div>
     <div id="filePreviewContent" class="file-preview-content"></div>
     <div id="filePreviewStatus" class="file-preview-status" role="status"></div>
   </div>

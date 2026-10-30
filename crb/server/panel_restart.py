@@ -58,6 +58,8 @@ class RestartManager:
         if not self.config_path:
             raise RuntimeError('此实例未配置面板重启入口')
         with self.lock:
+            from crb.server.office_engine import assert_idle
+            assert_idle({'state_dir': self.state_dir})
             old = read_record(self.state_dir)
             if old.get('requestId') == request_id:
                 return {'ok': True, 'accepted': True, 'requestId': request_id, 'restart': old}

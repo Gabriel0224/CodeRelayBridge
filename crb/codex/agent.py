@@ -43,7 +43,7 @@ from crb.codex.question_ui import CodexQuestionUI
 from crb.codex.native_history import NativeHistoryReader
 from crb.codex.conversation import create_configured
 import crb.codex.sidebar_ui as native_conversation_ui
-from crb.codex.projects import desktop_project_id, local_projects, path_key, project_paths, project_id_map, registered_backend_project
+from crb.codex.projects import desktop_project_id, local_projects, path_key, project_paths, project_id_map, registered_backend_project, thread_project_memberships
 from crb.common.live_view_cache import LiveTurnCache
 MAX_ITEM_TEXT = 500000
 MAX_TOOL_DETAIL = 200000
@@ -1858,6 +1858,10 @@ class HostAgent:
             raise ValueError('附件超过网页传输上限')
         if offset > asset['size']:
             raise ValueError('附件分片位置无效')
+        if payload.get('resolveOnly') is True:
+            if not asset.get('path'):
+                raise ValueError('此附件没有本地文件路径，请先下载到普通目录后打开')
+            return {'ok': True, 'path': asset['path'], 'name': asset['name'], 'viewOnly': False}
         if asset.get('data') is not None:
             chunk = asset['data'][offset:offset + limit]
         else:
@@ -2322,7 +2326,8 @@ class HostAgent:
             roots.setdefault(row['project_id'], []).append(row['path'])
         projects = [{'id': row['id'], 'name': title_text(row['name']), 'position': row['position'], 'roots': roots.get(row['id'], []), 'threadCount': 0} for row in project_rows]
         projects_by_id = {project['id']: project for project in projects}
-        root_matches = sorted(((root, project['id']) for project in projects for root in project['roots']), key=lambda item: len(item[0]), reverse=True)
+        memberships = thread_project_memberships(self.home, projects_by_id)
+        root_matches = sorted(((os.path.normcase(os.path.abspath(normalize_local_path(root))), project['id']) for project in projects for root in project['roots'] if root), key=lambda item: len(item[0]), reverse=True)
         with self.lock:
             read_state_available = self.native_read_state_available
             unread_threads = set(self.unread_threads)
@@ -2333,8 +2338,13 @@ class HostAgent:
         for row in rows:
             sidebar = native_thread_metadata(row, sections)
             project_id = row['project_id'] if row['project_id'] in projects_by_id else None
-            if project_id is None:
-                project_id = next((pid for root, pid in root_matches if path_belongs_to(row['cwd'], root)), None)
+            if row['id'] in memberships:
+                project_id = memberships[row['id']]
+            elif project_id is None:
+                matches = [(root, pid) for root, pid in root_matches if path_belongs_to(row['cwd'], root)]
+                longest = len(matches[0][0]) if matches else 0
+                candidates = {pid for root, pid in matches if len(root) == longest}
+                project_id = next(iter(candidates)) if len(candidates) == 1 else None
             if project_id and (not sidebar['isSubagent']):
                 projects_by_id[project_id]['threadCount'] += 1
             catalog.append({'id': row['id'], 'title': title_text(row['name'], row['title'], row['first_user_message']), 'cwd': row['cwd'] or '', 'model': row['model'], 'reasoningEffort': row['reasoning_effort'], 'updated_at': row['updated_at'], 'archived': bool(row['archived']), 'projectId': project_id, 'projectName': projects_by_id.get(project_id, {}).get('name', '未分类'), 'status': live_statuses.get(row['id'], 'notLoaded'), 'unread': row['id'] in unread_threads if read_state_available else None, 'automations': scheduled.get(row['id'], []), 'stateSource': 'codex-desktop', **sidebar})

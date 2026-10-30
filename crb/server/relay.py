@@ -34,6 +34,7 @@ if os.name != 'nt':
     import pty
     import termios
 from crb.files.file_access import SshFileManager
+from crb.server.office import OfficeManager
 from crb.paths import web_root
 from desktop_client import PRODUCT_NAME, VERSION as PROGRAM_VERSION
 from crb.server.panel_restart import RestartManager
@@ -458,6 +459,13 @@ class Relay:
         self.setup_failures = {}
         self.ssh_terminals = SshTerminalManager(cfg)
         self.ssh_files = SshFileManager(cfg)
+        from crb.server.local_preview import PreviewManager
+        self.local_preview = PreviewManager(self)
+        atexit.register(self.local_preview.close)
+        self.office = OfficeManager(cfg, self.office_files, self.office_writable)
+        from crb.server.office_gateway import ManagedGateway
+        self.office.gateway = ManagedGateway(self.office)
+        atexit.register(self.office.gateway.close)
         self.dbpath = relay_database(cfg['state_dir'])
         self.panel_restart = RestartManager(cfg.get('_config_path') if sys.platform.startswith('linux') and (not cfg.get('_native_manager')) else None, cfg['state_dir'])
         self.dbpath.parent.mkdir(parents=True, exist_ok=True, mode=448)
@@ -827,7 +835,22 @@ class Relay:
                 return host
             return next((hid for hid, state in self.hosts.items() if state.get('physicalHostId') == host and (hid in self.cfg['agents'] or self.client_pairing.contains(hid)) and (state.get('terminal', {}).get('transport') == 'client')), None)
 
-    def client_access(self, host, action, request):
+    def office_writable(self, host):
+        target = self.client_access_host(host)
+        if target:
+            with self.lock:
+                return self.hosts.get(target, {}).get('capabilities', {}).get('documentEditing') is True
+        return host in self.ssh_files.hosts
+
+    def office_files(self, request):
+        host = str(request.get('host') or '')
+        if self.client_access_host(host):
+            if str(request.get('action', '')).startswith('document_') and (not self.office_writable(host)):
+                raise ValueError('请升级目标客户端以启用 Office 文档回存')
+            return self.client_access(host, 'client_files', request, ephemeral=True)
+        return self.ssh_files.execute(request)
+
+    def client_access(self, host, action, request, ephemeral=False):
         target = self.client_access_host(host)
         if not target:
             raise ValueError('未找到已配对的客户端直连通道')
@@ -838,6 +861,10 @@ class Relay:
                 row = db.execute('SELECT result FROM commands WHERE id=? AND host=?', (cid, target)).fetchone()
             if row and row[0] is not None:
                 result = json.loads(row[0])
+                if ephemeral:
+                    with self.db() as db:
+                        receipt = {key: value for key, value in result.items() if key != 'data'}
+                        db.execute("UPDATE commands SET text='', result=? WHERE id=? AND host=?", (json.dumps(receipt), cid, target))
                 if not result.get('ok'):
                     raise ValueError(result.get('error') or '客户端未完成操作')
                 return result
@@ -881,6 +908,10 @@ def handler_factory(app):
             supplied = self.headers.get('X-Codex-Edge-Token', '')
             return bool(expected and supplied and hmac.compare_digest(expected, supplied))
 
+        def count_public_upload(self, size):
+            if self.public_edge_request():
+                app.record_traffic(size, 0)
+
         def count_public_traffic(self, download_bytes=0, count_request=False):
             if not self.public_edge_request():
                 return
@@ -912,7 +943,10 @@ def handler_factory(app):
                 self.send_header('Vary', 'Accept-Encoding')
             self.send_header('X-Content-Type-Options', 'nosniff')
             self.send_header('Referrer-Policy', 'no-referrer')
-            self.send_header('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data: blob: https:; font-src 'self' data:; frame-src 'self' blob:; object-src 'none'; frame-ancestors 'none'; base-uri 'none'")
+            office_script, office_frame = app.office.csp()
+            script_source = "'self'" + (' ' + office_script if office_script else '')
+            frame_source = "'self' blob:" + (' data: ' + office_frame if office_frame else '')
+            self.send_header('Content-Security-Policy', "default-src 'self'; script-src " + script_source + "; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data: blob: https:; font-src 'self' data:; frame-src " + frame_source + "; object-src 'none'; frame-ancestors 'none'; base-uri 'none'")
             for key, value in (extra or {}).items():
                 self.send_header(key, value)
             self.end_headers()
@@ -990,18 +1024,43 @@ def handler_factory(app):
             self.discard_post_body()
             return self.response(status, payload, extra={'Connection': 'close'})
 
+        def office_gateway(self):
+            settings = app.office.settings()
+            if not settings.get('managed_owner'):
+                return self.response(404, {'error': '文档组件尚未启用'})
+            return app.office.gateway.handle(self, settings, web_root())
+
+        def do_OPTIONS(self):
+            if urlsplit(self.path).path.startswith('/local-preview/'):
+                return app.local_preview.handle(self, web_root())
+            if urlsplit(self.path).path.startswith('/office-engine/'):
+                try:
+                    return self.office_gateway()
+                except (OSError, ValueError):
+                    return self.response(503, {'error': '文档组件暂不可用'})
+            return self.response(405, {'error': '不支持的请求'})
+
         def do_HEAD(self):
             self.do_GET()
 
         def do_GET(self):
             try:
                 url = urlsplit(self.path)
+                if url.path == '/agent/local-preview':
+                    host, _ = self.agent_identity()
+                    if not host:
+                        return self.response(401, {'error': 'Invalid agent credential'})
+                    return app.local_preview.agent(self, host, parse_qs(url.query).get('channel', [''])[0])
+                if url.path.startswith('/local-preview/'):
+                    return app.local_preview.handle(self, web_root())
+                if url.path.startswith('/office-engine/'):
+                    return self.office_gateway()
                 path, params = (url.path, parse_qs(url.query))
                 reload_nonce = page_reload_nonce(params)
                 if path in ('/', '/lite', '/lite/') or is_panel_page_path(path):
                     html = (web_root() / 'index.html').read_bytes()
                     return self.lite_asset(page_reload_html(html, reload_nonce), 'text/html; charset=utf-8', force_reload=bool(reload_nonce))
-                if path in ('/lite/app.js', '/lite/question-deck.js', '/lite/requests.js', '/lite/reload.js', '/lite/style.css', '/lite/i18n.js', '/lite/i18n-catalog.js'):
+                if path in ('/lite/app.js', '/lite/question-deck.js', '/lite/requests.js', '/lite/reload.js', '/lite/style.css', '/lite/i18n.js', '/lite/i18n-catalog.js', '/lite/office-editor.js', '/lite/office-frame.js', '/lite/local-preview.js'):
                     name = path.rsplit('/', 1)[-1]
                     asset = web_root() / name
                     if not asset.is_file():
@@ -1030,8 +1089,22 @@ def handler_factory(app):
                     with app.lock:
                         title = app.ui_title
                     return self.response(200, {'title': title, 'appVersion': PROGRAM_VERSION, 'feedbackUrl': issue_form_url()})
+                source_match = re.fullmatch('/office/source/([0-9a-f]{32})', path)
+                if source_match:
+                    return self.response(200, app.office.source(source_match[1], params.get('token', [''])[0]), 'application/octet-stream', extra={'Content-Disposition': 'attachment'})
                 if not app.authenticated(self.headers):
                     return self.response(401, {'error': '请先登录'})
+                if path == '/api/office':
+                    return self.response(200, app.office.public_status())
+                if path == '/api/office/status':
+                    state = app.office.status(params.get('id', [''])[0])
+                    encoded = json.dumps(state, sort_keys=True).encode()
+                    etag = '"' + hashlib.sha256(encoded).hexdigest()[:24] + '"'
+                    return self.response(304 if self.headers.get('If-None-Match') == etag else 200, b'' if self.headers.get('If-None-Match') == etag else state, extra={'ETag': etag})
+                if path == '/api/office/download':
+                    data, name = app.office.edited(params.get('id', [''])[0])
+                    from urllib.parse import quote
+                    return self.response(200, data, 'application/octet-stream', extra={'Content-Disposition': "attachment; filename*=UTF-8''" + quote(name, safe='')})
                 if path == '/api/panel/status':
                     with app.ssh_terminals.lock:
                         terminals = sum((s.process.poll() is None for s in app.ssh_terminals.sessions.values()))
@@ -1120,11 +1193,30 @@ def handler_factory(app):
             except Exception as exc:
                 self.response(400, {'error': str(exc)})
 
+        def do_PUT(self):
+            if urlsplit(self.path).path.startswith('/local-preview/'):
+                return app.local_preview.handle(self, web_root())
+            return self.response(405, {'error': '不支持的请求'})
+        do_PATCH = do_PUT
+        do_DELETE = do_PUT
+
         def do_POST(self):
             self._post_body_handled = False
             try:
                 if self.path == '/agent/sync':
                     return self.agent_sync()
+                callback_url = urlsplit(self.path)
+                if callback_url.path.startswith('/local-preview/'):
+                    return app.local_preview.handle(self, web_root())
+                if callback_url.path.startswith('/office-engine/'):
+                    return self.office_gateway()
+                callback_match = re.fullmatch('/office/callback/([0-9a-f]{32})', callback_url.path)
+                if callback_match:
+                    try:
+                        result = app.office.callback(callback_match[1], parse_qs(callback_url.query).get('token', [''])[0], self.body(), self.headers.get('Authorization', ''))
+                        return self.response(200, result)
+                    except ValueError:
+                        return self.response(403, {'error': 1})
                 if not self.check_origin():
                     return
                 if self.path == '/api/login':
@@ -1212,6 +1304,19 @@ def handler_factory(app):
                 if self.path == '/api/files':
                     request = self.body()
                     return self.response(200, app.client_access(request.get('host', ''), 'client_files', request) if app.client_access_host(request.get('host', '')) else app.ssh_files.execute(request))
+                if self.path == '/api/local-preview/open':
+                    request = self.body()
+                    return self.response(200, app.local_preview.open(request.get('host', ''), request.get('url', '')))
+                if self.path == '/api/local-preview/close':
+                    app.local_preview.close_session(str(self.body().get('id', '')))
+                    return self.response(200, {'ok': True})
+                if self.path == '/api/office/open':
+                    return self.response(200, app.office.open(self.body()))
+                if self.path in ('/api/office/save', '/api/office/close'):
+                    request = self.body()
+                    session = str(request.get('id') or '')
+                    result = app.office.force_save(session, request.get('fresh') is True) if self.path.endswith('/save') else app.office.close(session, request.get('retain') is True)
+                    return self.response(200, result)
                 if self.path == '/api/logout':
                     return self.response(200, {'ok': True}, extra={'Set-Cookie': 'relay_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0'})
                 if self.path == '/api/traffic/reset':

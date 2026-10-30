@@ -7,7 +7,7 @@ work = Path(os.environ['RELAY_BUILD_WORK'])
 edition = os.environ['RELAY_BUILD_EDITION']
 product = 'RelayClient' if role == 'client' else 'RelayServer'
 stage = work / 'bridge-stage/relay_bridge_bundle'
-hidden = ['desktop_client.self_check', 'yaml', 'websocket'] + (['win32timezone', 'keyring.backends.Windows'] if sys.platform == 'win32' else ['keyring.backends.macOS'] if sys.platform == 'darwin' else ['keyring.backends.SecretService', 'secretstorage', 'jeepney'])
+hidden = ['desktop_client.self_check', 'yaml', 'websocket', 'queue'] + (['win32timezone', 'keyring.backends.Windows'] if sys.platform == 'win32' else ['keyring.backends.macOS'] if sys.platform == 'darwin' else ['keyring.backends.SecretService', 'secretstorage', 'jeepney'])
 if edition != 'standard':
     hidden += []
 datas, binaries = ([(str(work / 'relay-edition.json'), '.')], [])

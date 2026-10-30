@@ -1,6 +1,6 @@
 """Native server management UI; no terminal, browser automation or model login."""
 import sys
-from PySide6.QtCore import QThreadPool, QTimer, QUrl, Qt
+from PySide6.QtCore import QThreadPool, QTimer, QUrl, Qt, Signal
 from PySide6.QtGui import QAction, QDesktopServices
 from PySide6.QtWidgets import QApplication, QFileDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox, QPlainTextEdit, QPushButton, QSpinBox, QStackedWidget, QCheckBox, QSystemTrayIcon, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget, QHeaderView
 from desktop_client.app import STYLE, Work, SingleInstance, app_icon, note, scroll_page
@@ -13,6 +13,7 @@ from desktop_client.i18n import QAction, QFileDialog, QLabel, QLineEdit, QMainWi
 from desktop_client.edition import edition_label
 
 class ServerWindow(QMainWindow):
+    documentProgress = Signal(str)
 
     def __init__(self, manager=None, background_updates=True):
         super().__init__()
@@ -50,7 +51,7 @@ class ServerWindow(QMainWindow):
         outer.addLayout(header)
         nav = QHBoxLayout()
         self.pages = QStackedWidget()
-        for i, title in enumerate(('服务概览', '连接与首次设置', '日志')):
+        for i, title in enumerate(('服务概览', '连接与首次设置', '日志', '文档编辑')):
             b = QPushButton(title)
             b.clicked.connect(lambda checked=False, n=i: self.pages.setCurrentIndex(n))
             nav.addWidget(b)
@@ -94,6 +95,7 @@ class ServerWindow(QMainWindow):
         log_refresh.clicked.connect(lambda: self.submit('log', self.manager.log_tail))
         layout.addWidget(log_refresh)
         self.pages.addWidget(logs)
+        self.pages.addWidget(scroll_page(self.document_page()))
         outer.addWidget(self.pages, 1)
         self.notice = note('已有服务会直接读取其配置，不覆盖账号和历史。')
         outer.addWidget(self.notice)
@@ -113,6 +115,84 @@ class ServerWindow(QMainWindow):
         QTimer.singleShot(0, self.refresh)
         if background_updates:
             self.relay_update_dialog().start_background_checks()
+
+    def document_page(self):
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.addWidget(note('安装共享文档编辑组件后，连接本服务端的电脑均可使用，无需逐台安装。支持 Word、Excel、PPT 的现代格式编辑，修改经校验后保存回目标电脑；旧格式以只读方式打开。'))
+        self.document_state = note('尚未检查文档组件状态。')
+        layout.addWidget(self.document_state)
+        self.documentProgress.connect(self.document_state.setText)
+        operations = QHBoxLayout()
+        for action, label in [('install', '安装并启用'), ('start', '启动组件'), ('stop', '停止组件'), ('status', '检查组件状态'), ('remove', '移除组件')]:
+            button = QPushButton(label)
+            button.clicked.connect(lambda checked=False, a=action: self.document_operation(a))
+            self.controls.append(button)
+            operations.addWidget(button)
+        layout.addLayout(operations)
+        layout.addWidget(note('首次安装需要下载组件并可能请求系统授权。Windows／Mac 请完成官方运行环境安装和首次启动；需要重启时，完成后再点安装即可继续。组件仅由服务端运行，不另开公网端口。'))
+        advanced = QCheckBox('高级：连接已有的独立文档引擎')
+        layout.addWidget(advanced)
+        self.document_advanced = QWidget()
+        advanced_layout = QVBoxLayout(self.document_advanced)
+        layout.addWidget(self.document_advanced)
+        self.document_advanced.hide()
+        advanced.toggled.connect(self.document_advanced.setVisible)
+        self.document_enabled = QCheckBox('启用 Office 文档编辑')
+        advanced_layout.addWidget(self.document_enabled)
+        form = QFormLayout()
+        self.document_editor = QLineEdit()
+        self.document_service = QLineEdit()
+        self.document_callback = QLineEdit()
+        self.document_secret = QLineEdit()
+        self.document_secret.setEchoMode(QLineEdit.EchoMode.Password)
+        self.document_editor.setPlaceholderText('https://docs.example.com')
+        self.document_service.setPlaceholderText('留空使用文档引擎网页地址')
+        self.document_callback.setPlaceholderText('留空使用面板网页访问地址')
+        self.document_secret.setPlaceholderText('与 ONLYOFFICE 的 JWT_SECRET 相同，至少 32 个字符；留空保持')
+        for label, field in [('引擎网页地址', self.document_editor), ('引擎内部地址', self.document_service), ('引擎访问面板地址', self.document_callback), ('JWT 密钥', self.document_secret)]:
+            form.addRow(label, field)
+        advanced_layout.addLayout(form)
+        advanced_layout.addWidget(note('网页地址须可由浏览器访问；面板须能访问引擎内部地址，引擎须能访问面板地址。HTTPS 面板请配套 HTTPS 引擎。密钥只保存在服务端，不发送到网页。'))
+        buttons = QHBoxLayout()
+        save = QPushButton('保存文档引擎配置')
+        check = QPushButton('检查文档引擎连接')
+        save.clicked.connect(self.save_document_settings)
+        check.clicked.connect(lambda: self.submit('document-check', self.manager.check_document_engine))
+        self.controls.extend((save, check))
+        buttons.addWidget(save)
+        buttons.addWidget(check)
+        buttons.addStretch()
+        advanced_layout.addLayout(buttons)
+        layout.addStretch()
+        self.load_document_settings()
+        return page
+
+    def document_operation(self, action):
+        if action == 'remove' and QMessageBox.question(self, '移除文档组件', '将移除本程序专属的文档引擎和数据卷。已有用户文档及失败回存副本保留；须先关闭所有编辑器。继续？') != QMessageBox.StandardButton.Yes:
+            return
+        if self.busy:
+            return
+        self.document_state.setText('正在处理文档组件，请稍候…')
+        self.submit('document-' + action, lambda: self.manager.managed_document(action, self.documentProgress.emit))
+
+    def load_document_settings(self):
+        if not self.manager.config_path().exists():
+            return
+        try:
+            data = self.manager.document_settings()
+            self.document_enabled.setChecked(bool(data['enabled']))
+            self.document_editor.setText(data['editor_url'])
+            self.document_service.setText(data['service_url'])
+            self.document_callback.setText(data['callback_url'])
+            self.document_secret.clear()
+        except (OSError, ValueError, KeyError):
+            self.document_enabled.setChecked(False)
+
+    def save_document_settings(self):
+        fields = dict(enabled=self.document_enabled.isChecked(), editor_url=self.document_editor.text(), service_url=self.document_service.text(), callback_url=self.document_callback.text(), secret=self.document_secret.text())
+        self.document_secret.clear()
+        self.submit('document-save', lambda: self.manager.save_document_settings(**fields))
 
     def setup_page(self):
         page = QWidget()
@@ -144,6 +224,9 @@ class ServerWindow(QMainWindow):
             form.addRow(label, field)
         layout.addLayout(form)
         layout.addWidget(note('网页访问地址根据监听 IP 和端口自动生成；使用域名或反代时可自行修改。'))
+        self.setup_document = QCheckBox('同时安装并启用共享文档编辑组件（推荐）')
+        self.setup_document.setChecked(not self.manager.config_path().exists())
+        layout.addWidget(self.setup_document)
         languages = QHBoxLayout()
         languages.addWidget(QLabel('语言'))
         self.language_select = language_picker(self, self.preferences, lambda value, error: self.notice.setText('保存失败：' + error) if error else None)
@@ -262,10 +345,17 @@ class ServerWindow(QMainWindow):
                 if value:
                     self.submit('restore-after-update', lambda: self.manager.control('start'))
             return
+        if key.startswith('document-'):
+            self.load_document_settings()
+            if isinstance(value, dict):
+                self.document_state.setText('文档组件已就绪。' if value.get('healthy') else '文档组件未就绪，请点击安装并启用；已有组件可重试。')
+            else:
+                self.document_state.setText(str(value))
         if key == 'log':
             self.logs.setPlainText(str(value))
         else:
             if key == 'import':
+                self.load_document_settings()
                 cfg = self.manager.config()
                 self.bind.setText(str(cfg['bind']))
                 self.port.setValue(int(cfg['port']))
@@ -281,6 +371,10 @@ class ServerWindow(QMainWindow):
                 self.save_config_button.setText('保存服务器配置')
             self.notice.setText(str(value))
             self.refresh()
+            if key == 'create' and self.setup_document.isChecked():
+                self.setup_document.setChecked(False)
+                self.pages.setCurrentIndex(3)
+                self.document_operation('install')
 
     def apply_status(self, value):
         self.current = value
@@ -307,6 +401,8 @@ class ServerWindow(QMainWindow):
         for b in self.controls:
             b.setEnabled(True)
         self.notice.setText(error)
+        if key.startswith('document-'):
+            self.document_state.setText(error)
         if key == 'crb-update-stop':
             self.timer.start(5000)
             self.update_dialog.failed('install', error)
@@ -451,6 +547,13 @@ def main():
     if not single.claim(show='--tray' not in sys.argv):
         return 0
     window = ServerWindow()
+    if '--setup-office' in sys.argv:
+        if window.manager.config_path().exists():
+            window.pages.setCurrentIndex(3)
+            QTimer.singleShot(0, lambda: window.document_operation('install'))
+        else:
+            window.pages.setCurrentIndex(1)
+            window.setup_document.setChecked(True)
     single.window = window
     if '--tray' not in sys.argv or not window.tray:
         window.show_window()

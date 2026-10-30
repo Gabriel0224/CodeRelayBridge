@@ -813,6 +813,8 @@ class HarnessAgent:
                 raw = path.read_bytes()
                 if hashlib.sha256(raw).hexdigest() != digest:
                     raise ValueError('Harness 原生附件完整性校验失败')
+                if p.get('resolveOnly') is True:
+                    return {'ok': True, 'path': str(path), 'name': reference['name'], 'viewOnly': True}
                 mime = mimetypes.guess_type(reference['name'])[0] or 'application/octet-stream'
             else:
                 asset = self.rpc('session/attachment', {'sessionId': sid, 'attachmentId': identity})

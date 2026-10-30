@@ -43,6 +43,11 @@ chinesesimp.CleanupFailed=启动项清理失败，卸载已取消；未删除个
 english.MoveExisting=This Relay is already installed in another directory. Uninstall it before choosing a new location. Pairing, settings and history are retained.
 chinesesimp.MoveExisting=此 Relay 已安装在其他目录。更换位置前请先卸载现有程序；配对、设置和历史会保留。
 
+#if Role == "server"
+[Tasks]
+Name: "office"; Description: "Install and enable shared document editing / 安装并启用共享文档编辑"; Flags: checkedonce; Check: not PayloadOnly
+#endif
+
 [Files]
 Source: "{#Source}\{#Product}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#Source}\RELEASE.json"; DestDir: "{code:MetadataDirectory}"; Flags: ignoreversion
@@ -57,7 +62,7 @@ Name: "{userprograms}\CodeRelayBridge\CodeRelayBridge {#Role}"; Filename: "{app}
 Name: "{userdesktop}\Relay {#Role}"; Filename: "{app}\{#Product}.exe"; WorkingDir: "{app}"; Check: not PayloadOnly
 
 [Run]
-Filename: "{app}\{#Product}.exe"; Description: "{cm:LaunchCRB}"; Flags: nowait postinstall skipifsilent; Check: not PayloadOnly
+Filename: "{app}\{#Product}.exe"; Parameters: "{code:LaunchArguments}"; Description: "{cm:LaunchCRB}"; Flags: nowait postinstall skipifsilent; Check: not PayloadOnly
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}"
@@ -67,6 +72,14 @@ Type: filesandordirs; Name: "{app}\*"; Check: not PayloadOnly
 
 [Code]
 var Extraction, PreviousPayload, SelectedDirectory: String; InstallBegan, InstallCommitted: Boolean;
+
+function LaunchArguments(Param: String): String;
+begin
+  Result := '';
+#if Role == "server"
+  if WizardIsTaskSelected('office') then Result := '--setup-office';
+#endif
+end;
 
 function EnumProcesses(var First: LongWord; Bytes: LongWord; var Needed: LongWord): Boolean;
   external 'EnumProcesses@psapi.dll stdcall';

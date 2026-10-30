@@ -55,7 +55,7 @@ def build_windows(payload, output, role, edition, version, compiler=None):
 
 def deb_control(role, edition, version, minimum_glibc):
     product = 'Client' if role == 'client' else 'Server'
-    return '\n'.join(['Package: coderelaybridge-' + role, 'Version: ' + version + '-1', 'Architecture: amd64', 'Section: utils', 'Priority: optional', 'Maintainer: Gabriel <gabriel940368@gmail.com>', 'Depends: libc6 (>= ' + minimum_glibc + '), libstdc++6, libgcc-s1, libgl1, libegl1, libdbus-1-3, libxkbcommon0, libxcb1, libxcb-cursor0, libxcb-icccm4, libxcb-image0, libxcb-keysyms1, libxcb-render-util0, libxcb-xinerama0, libxcb-xkb1, libx11-xcb1, libxkbcommon-x11-0, pkexec | policykit-1', 'X-CRB-Role: ' + role, 'X-CRB-Edition: ' + edition, 'Description: CodeRelayBridge ' + product + ' desktop bridge', ' Self-contained desktop application. Model applications remain local.', ' User pairing, configuration and history are not removed on uninstall.', ''])
+    return '\n'.join(['Package: coderelaybridge-' + role, 'Version: ' + version + '-1', 'Architecture: amd64', 'Section: utils', 'Priority: optional', 'Maintainer: Gabriel <gabriel940368@gmail.com>', 'Depends: ' + ('python3, ' if role == 'server' else '') + 'libc6 (>= ' + minimum_glibc + '), libstdc++6, libgcc-s1, libgl1, libegl1, libdbus-1-3, libxkbcommon0, libxcb1, libxcb-cursor0, libxcb-icccm4, libxcb-image0, libxcb-keysyms1, libxcb-render-util0, libxcb-xinerama0, libxcb-xkb1, libx11-xcb1, libxkbcommon-x11-0, pkexec | policykit-1', 'X-CRB-Role: ' + role, 'X-CRB-Edition: ' + edition, 'Description: CodeRelayBridge ' + product + ' desktop bridge', ' Self-contained desktop application. Model applications remain local.', ' User pairing, configuration and history are not removed on uninstall.', ''])
 
 def deb_guard(role):
     return '#!/bin/sh\nset -eu\nrole=ROLE\nbase=/opt/coderelaybridge/$role\nif [ "$role" = client ]; then product=RelayClient; profile=CodexRelayClient; else product=RelayServer; profile=CodexRelayServer; fi\nfor directory in /opt /opt/coderelaybridge "$base"; do\n if [ -L "$directory" ]; then echo \'CRB: installation directory is a symbolic link; refusing to modify it.\' >&2; exit 1; fi\ndone\nif [ -d "$base" ]; then\n if ! dpkg-query -S "$base/CRB-INSTALL.json" >/dev/null 2>&1; then\n  echo \'CRB: an unmanaged application already occupies the install directory.\' >&2; exit 1\n fi\nfi\nfor entry in /proc/[0-9]*/exe; do\n executable=$(readlink "$entry" 2>/dev/null || true)\n case "$executable" in\n  "$base"/*|*/"$profile"/app/"$product") echo \'CRB: close this Relay application and stop its Relay service before installing, upgrading or removing it. Original model Apps may stay open.\' >&2; exit 1;;\n esac\ndone\nexit 0\n'.replace('ROLE', role)
@@ -73,6 +73,12 @@ def build_deb(payload, output, role, edition, version, dependencies):
     app = tree / 'opt/coderelaybridge' / role
     shutil.copytree(payload / product, app, symlinks=True)
     (app / 'CRB-INSTALL.json').write_text(json.dumps({'schema': 1, 'manager': 'deb', 'role': role, 'edition': edition, 'version': version}), encoding='utf-8')
+    if role == 'server':
+        from crb.server.office_wire import WIRE_SOURCE
+        helper = app / 'office-runtime'
+        helper.mkdir(parents=True)
+        shutil.copyfile(Path(__file__).resolve().parents[1] / 'desktop_server/document_service.py', helper / 'service.py')
+        (helper / 'office-wire.txt').write_text(WIRE_SOURCE, encoding='utf-8')
     documentation = tree / 'usr/share/doc' / ('coderelaybridge-' + role)
     documentation.mkdir(parents=True)
     for name in ('RELEASE.json', 'DEPENDENCIES.json', 'LICENSE', 'LICENSING.md', 'THIRD_PARTY_NOTICES.md', '安装说明.md', '安装说明.txt'):
@@ -93,6 +99,11 @@ def build_deb(payload, output, role, edition, version, dependencies):
     for name in ('preinst', 'prerm'):
         (control / name).write_text(deb_guard(role), encoding='utf-8')
         (control / name).chmod(493)
+    if role == 'server':
+        guard = control / 'prerm'
+        content = guard.read_text()
+        content = content.replace('set -eu\n', 'set -eu\nif [ "${1:-}" = remove ] && [ -d /etc/coderelaybridge-office ]; then\n  for manifest in /etc/coderelaybridge-office/*.json; do\n    if [ -f "$manifest" ]; then\n      echo "CRB: remove the owned document component from the server manager before uninstalling the server package." >&2\n      exit 1\n    fi\n  done\nfi\n', 1)
+        guard.write_text(content)
     for entry in tree.rglob('*'):
         if entry.is_symlink():
             continue

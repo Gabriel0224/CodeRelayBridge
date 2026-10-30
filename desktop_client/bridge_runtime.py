@@ -377,7 +377,7 @@ def run_worker(key):
                 agent = core.HarnessAgent(meter_config, client=client)
             if meter_config.get('local_access', True):
                 from desktop_client.local_access import LocalAccess
-                meter.local_access = LocalAccess(agent, meter_config['host_id'], load_core('codex'))
+                meter.local_access = LocalAccess(agent, meter_config['host_id'], load_core('codex'), preview_config=meter_config)
             meter.agent = agent
             agent.connection_retry = meter.retry
             meter.client_control.bind(agent)

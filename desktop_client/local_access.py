@@ -12,7 +12,7 @@ import urllib.request
 
 class LocalAccess:
 
-    def __init__(self, agent, host_id, core):
+    def __init__(self, agent, host_id, core, preview_config=None):
         self.agent, self.host_id = (agent, host_id)
         self.terminal_agent = object.__new__(core.HostAgent)
         self.terminal_agent.terminals = {}
@@ -25,10 +25,18 @@ class LocalAccess:
         namespace = {}
         exec(compile(tree, '<bundled-file-helper>', 'exec'), namespace)
         self.file_run = namespace['run']
+        self.preview = None
+        if preview_config is not None:
+            from desktop_client.local_preview import LocalPreviewClient
+            self.preview = LocalPreviewClient(preview_config)
         original = agent.execute
         access = self
 
         def execute(instance, command):
+            if command['action'] == 'client_web_preview':
+                if access.preview is None:
+                    raise ValueError('本地网页预览尚未配置')
+                return access.preview.connect(json.loads(command['text']))
             if command['action'] == 'client_files':
                 return access.files(json.loads(command['text']))
             if command['action'] == 'client_terminal':
@@ -40,7 +48,7 @@ class LocalAccess:
         agent.execute = types.MethodType(execute, agent)
 
     def files(self, request):
-        if not isinstance(request, dict) or request.get('action') not in ('roots', 'list', 'folders', 'read', 'create', 'copy', 'delete'):
+        if not isinstance(request, dict) or request.get('action') not in ('roots', 'list', 'folders', 'read', 'create', 'copy', 'delete', 'document_probe', 'document_begin', 'document_chunk', 'document_commit', 'document_status', 'document_abort', 'document_forget'):
             raise ValueError('不支持的客户端文件操作')
         action = request['action']
         payload = request.get('payload') or {}
@@ -51,9 +59,11 @@ class LocalAccess:
             if not isinstance(value, str) or len(value) > 4096 or '\x00' in value:
                 raise ValueError('文件路径无效')
         offset, limit = (int(payload.get('offset', 0)), int(payload.get('limit', 2 * 1024 * 1024 if action == 'read' else 250)))
-        if not 0 <= offset <= (256 * 1024 * 1024 if action == 'read' else 1000000) or not 1 <= limit <= (2 * 1024 * 1024 if action == 'read' else 300):
+        if not 0 <= offset <= (256 * 1024 * 1024 if action == 'read' else 32 * 1024 * 1024 if action.startswith('document_') else 1000000) or not 1 <= limit <= (2 * 1024 * 1024 if action == 'read' else 300):
             raise ValueError('文件读取范围无效')
         args = dict(payload, action=action, offset=offset, limit=limit)
+        if action.startswith('document_') and len(json.dumps(args)) > 256 * 1024:
+            raise ValueError('文档分块请求过长')
         args.setdefault('path', '')
         if action == 'copy' and (not args.get('destination')):
             raise ValueError('未指定粘贴目录')
@@ -93,11 +103,16 @@ class LocalAccess:
         return request
 
     def decorate_payload(self, data):
+        data.setdefault('capabilities', {})['documentEditing'] = True
+        if self.preview is not None:
+            data['capabilities']['localWebPreview'] = True
         data['terminal'] = {'supported': True, 'transport': 'client', 'shell': 'PowerShell' if sys.platform == 'win32' else 'Shell', 'kind': 'windows' if sys.platform == 'win32' else 'posix', 'sessions': self.sessions()}
         actions = data.get('capabilities', {}).get('actions')
         if isinstance(actions, list):
-            data['capabilities']['actions'] = sorted(set(actions) | {'client_files', 'client_terminal', 'file_read_text', 'file_write_text'})
+            data['capabilities']['actions'] = sorted(set(actions) | {'client_files', 'client_terminal', 'file_read_text', 'file_write_text'} | ({'client_web_preview'} if self.preview is not None else set()))
         return data
 
     def close(self):
+        if self.preview:
+            self.preview.close()
         self.terminal_agent.close_all_terminals()

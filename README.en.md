@@ -23,6 +23,10 @@ An empty-state example with no real accounts, devices, or conversations loaded.
 
 Available actions depend on the capabilities of each desktop app.
 
+Source addition: install and manage a shared ONLYOFFICE Docs component from the server UI; connected clients can edit Word, Excel and PowerPoint files and save back to the selected computer. The current 0.6.70 installers do not include this feature. See [document editing setup](docs/DOCUMENT_EDITING.md).
+
+Source addition: [local web previews](docs/LOCAL_WEB_PREVIEW.md) forward a target client’s localhost dashboards, live logs and charts. This is not included in current installers.
+
 ## Downloads and requirements
 
 [GitHub releases](https://github.com/Gabriel0224/CodeRelayBridge/releases)

@@ -53,6 +53,7 @@ def worker():
         monitor.join(2)
         server.server_close()
         app.ssh_terminals.close_all()
+        app.local_preview.close()
         status_writer.publish(dict(state, phase='stopped'))
     return 0
 

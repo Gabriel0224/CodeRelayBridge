@@ -1595,6 +1595,9 @@ function applyLiteCatalogPatch(hosts, patches) {
 
 function showLogin() {
   if (edgeRedirecting) return;
+  closeWebPreviewTabs();
+  if ($('filePreviewDialog').open) $('filePreviewDialog').close();
+  document.body.classList.remove('preview-split-open');
   panelNavigationReady = false;
   source?.close();
   source = null;
@@ -2190,6 +2193,9 @@ async function downloadAttachment(hostId, threadId, attachment, button) {
   button.textContent = '准备中…';
   try {
     const asset = await loadAsset(hostId, threadId, attachment);
+    if (asset.external && window.CRBLocalPreview?.isLocal(asset.url)) {
+      await window.CRBLocalPreview.open(hostId, asset.url); button.textContent = '已打开'; return;
+    }
     const link = document.createElement('a');
     link.href = asset.url;
     link.download = asset.external ? '' : (asset.name || attachment.name || '附件');
@@ -2218,11 +2224,12 @@ const previewImageExtensions = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bm
 const previewLimits = {text: 2 * 1024 * 1024, markdown: 2 * 1024 * 1024,
   table: 2 * 1024 * 1024, html: 2 * 1024 * 1024,
   audio: 40 * 1024 * 1024, video: 40 * 1024 * 1024,
-  image: 24 * 1024 * 1024, pdf: 40 * 1024 * 1024};
+  image: 24 * 1024 * 1024, pdf: 40 * 1024 * 1024, office: 32 * 1024 * 1024};
 
 function filePreviewKind(name, mime = '') {
   const extension = String(name || '').split('.').pop().toLowerCase();
   const type = String(mime || '').toLowerCase().split(';')[0];
+  if (['docx', 'xlsx', 'pptx', 'doc', 'xls', 'ppt', 'odt', 'ods', 'odp', 'rtf'].includes(extension)) return 'office';
   if (['html', 'htm'].includes(extension) || type === 'text/html') return 'html';
   if (['csv', 'tsv'].includes(extension)) return 'table';
   if (['mp3', 'wav', 'ogg', 'm4a', 'flac'].includes(extension) || type.startsWith('audio/')) return 'audio';
@@ -2246,6 +2253,18 @@ function setFilePreviewFontSize(value, remember = false) {
     try { localStorage.setItem('codexRelayPreviewFontSize', String(filePreviewFontSize)); }
     catch (_) {}
   }
+}
+
+let previewDialogClosing = false;
+let previewSplit = false;
+let previewModeChanging = false;
+
+function showFilePreview() {
+  if (previewDialogClosing) return;
+  const dialog = $('filePreviewDialog');
+  dialog.classList.toggle('preview-split', previewSplit);
+  document.body.classList.toggle('preview-split-open', previewSplit);
+  if (!dialog.open) previewSplit ? dialog.show() : dialog.showModal();
 }
 
 function activeFilePreview() {
@@ -2310,6 +2329,13 @@ function moveFilePreviewTab(fromId, targetId) {
   renderFilePreviewTabs();
 }
 
+function refreshOfficePreviewActions(tab) {
+  $('filePreviewOfficeSave').hidden = !tab.office?.editable;
+  $('filePreviewOfficeSave').disabled = Boolean(tab.office?.saving) || !tab.office?.ready;
+  $('filePreviewOfficeRecovery').hidden = !['pending', 'saving', 'saved', 'failed', 'conflict'].includes(tab.office?.state?.state);
+  $('filePreviewOfficeRetain').hidden = !['failed', 'conflict'].includes(tab.office?.state?.state);
+}
+
 function activateFilePreview(id) {
   const tab = filePreviewTabs.find(item => item.id === id);
   if (!tab) return;
@@ -2319,9 +2345,12 @@ function activateFilePreview(id) {
   $('filePreviewMeta').textContent = tab.meta;
   $('filePreviewStatus').textContent = tab.status;
   $('filePreviewDownload').disabled = !tab.downloader;
+  $('filePreviewDownload').hidden = tab.kind === 'web';
+  window.CRBLocalPreview?.activate(tab);
   const remote = tab.key.startsWith('remote/');
-  $('filePreviewEdit').hidden = !remote;
+  $('filePreviewEdit').hidden = !remote || !['text', 'markdown', 'table', 'html'].includes(tab.kind);
   $('filePreviewEdit').textContent = tab.editing ? '取消编辑' : '编辑';
+  refreshOfficePreviewActions(tab);
   const attachHost = physicalHostId() === tab.hostId ? currentHost() : catalog.find(item => item.id === tab.hostId);
   $('filePreviewAttach').hidden = !remote || !supportsAction(attachHost, 'attach_local_file');
   $('filePreviewAttach').disabled = Boolean(tab.editing);
@@ -2330,13 +2359,25 @@ function activateFilePreview(id) {
   if (annotation) annotation.hidden = !tab.sourcePath || !['text', 'markdown', 'table'].includes(tab.kind) || selected?.host !== tab.hostId;
   setFilePreviewFontSize(filePreviewFontSize);
   renderFilePreviewTabs();
-  if (!$('filePreviewDialog').open) $('filePreviewDialog').showModal();
+  showFilePreview();
 }
 
-function closeFilePreviewTab(id) {
+async function closeFilePreviewTab(id, retain = false) {
   const index = filePreviewTabs.findIndex(tab => tab.id === id);
   if (index < 0) return;
-  const [tab] = filePreviewTabs.splice(index, 1);
+  const candidate = filePreviewTabs[index];
+  if (candidate.closing) return;
+  if (candidate.office) {
+    candidate.closing = true;
+    try { if (!await window.CRBOffice.close(candidate.office, retain)) return; }
+    catch (error) { setPreviewStatus(candidate, error.message); return; }
+    finally { candidate.closing = false; }
+  }
+  // Other tabs may have moved while an Office save was awaiting its receipt.
+  const currentIndex = filePreviewTabs.indexOf(candidate);
+  if (currentIndex < 0) return;
+  const [tab] = filePreviewTabs.splice(currentIndex, 1);
+  if (tab.kind === 'web') window.CRBLocalPreview?.release(tab);
   tab.closed = true;
   for (const url of tab.urls) URL.revokeObjectURL(url);
   tab.pane.remove();
@@ -2394,6 +2435,7 @@ async function renderFilePreview(blob, tab, truncated = false) {
     $('filePreviewAnnotation').hidden = !tab.sourcePath || !['text', 'markdown', 'table'].includes(kind) || selected?.host !== tab.hostId;
   }
   const content = tab.pane;
+  content.dataset.localPreviewHost = tab.hostId;
   content.replaceChildren();
   if (kind === 'table') {
     const value = await blob.text();
@@ -2419,8 +2461,13 @@ async function renderFilePreview(blob, tab, truncated = false) {
     // Opaque origin, no scripts/network/forms: untrusted file cannot reach the panel.
     frame.setAttribute('sandbox', '');
     const policy = "default-src 'none'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; base-uri 'none'; form-action 'none'";
-    frame.srcdoc = `<meta http-equiv="Content-Security-Policy" content="${policy}">${source}`;
+    // The file iframe has no script bridge. Expose local targets as panel-owned
+    // buttons below it, rather than navigating this static frame to loopback.
+    const safeSource = source.replace(/\bhref\s*=\s*(["'])(https?:\/\/(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?[^"']*)\1/gi, 'data-local-href=$1$2$1');
+    frame.srcdoc = `<meta http-equiv="Content-Security-Policy" content="${policy}">${safeSource}`;
     content.append(frame);
+    const links = window.CRBLocalPreview?.textLinks(source, tab.hostId);
+    if (links) content.append(links);
     const details = document.createElement('details'), summary = document.createElement('summary'), pre = document.createElement('pre');
     summary.textContent = '查看 HTML 源码'; pre.textContent = source; details.append(summary, pre); content.append(details);
     setPreviewStatus(tab, '安全预览：不执行脚本或加载外部资源。');
@@ -2460,6 +2507,7 @@ async function renderFilePreview(blob, tab, truncated = false) {
       pre.textContent = value;
       content.append(pre);
     }
+    window.CRBLocalPreview?.bind(content, tab.hostId, '');
     setPreviewStatus(tab, truncated ? '文件较大，仅预览前 2 MB；可下载完整文件。' : '');
   } else if (kind === 'image') {
     const url = URL.createObjectURL(blob);
@@ -2556,16 +2604,38 @@ async function hydratePreviewImages(tab, rendered) {
 
 async function openAttachmentPreview(hostId, threadId, attachment) {
   if (attachment.localFileReference) {
-    return openRemoteFilePreview(hostId, {path: attachment.source,
+    const fileHost = filePreviewKind(attachment.name || attachment.label, attachment.mime) === 'office'
+      ? (catalog.find(host => host.id === hostId)?.physicalHostId || hostId) : hostId;
+    return openRemoteFilePreview(fileHost, {path: attachment.source,
       name: attachment.name || attachment.label || '文件', size: null});
   }
   const name = attachment.name || attachment.label || '附件';
   const kind = filePreviewKind(name, attachment.mime);
+  if (kind === 'office' && !attachment.external && attachment.available !== false) {
+    try {
+      if (attachment.size > previewLimits.office) throw new Error('文档超过 32 MB 编辑上限');
+      const resolved = await issueCommand('fetch_asset', {host: hostId, thread: threadId,
+        payload: {assetId: attachment.id, resolveOnly: true, limit: 1}});
+      if (!resolved.path) throw new Error('请升级目标客户端以启用 Office 文档回存');
+      const fileHost = catalog.find(host => host.id === hostId)?.physicalHostId || hostId;
+      return openRemoteFilePreview(fileHost, {path: resolved.path, name: resolved.name || name,
+        size: attachment.size, officeViewOnly: resolved.viewOnly === true});
+    } catch (error) {
+      const {tab} = beginFilePreview(`attachment/${hostId}/${threadId}/${attachment.id}`, name,
+        attachment.mime || 'Office', async () => {
+          const asset = await loadAsset(hostId, threadId, attachment);
+          downloadBlobUrl(asset.url, asset.name || name);
+        }, kind);
+      tab.pane.textContent = `无法预览：${error.message}`;
+      return;
+    }
+  }
   const {tab, existing} = beginFilePreview(`attachment/${hostId}/${threadId}/${attachment.id}`, name,
     `${attachment.mime || '附件'} · ${formatBytes(attachment.size)}`,
     attachment.available === false ? null : async () => {
       const asset = await loadAsset(hostId, threadId, attachment);
-      if (asset.external) window.open(asset.url, '_blank', 'noopener,noreferrer');
+      if (asset.external && window.CRBLocalPreview?.isLocal(asset.url)) await window.CRBLocalPreview.open(hostId, asset.url);
+      else if (asset.external) window.open(asset.url, '_blank', 'noopener,noreferrer');
       else downloadBlobUrl(asset.url, asset.name || name);
     }, kind);
   if (existing) return;
@@ -2647,6 +2717,7 @@ function messageAttachments(target, item) {
 }
 
 function bindInlineAttachmentPreviews(target, item, hostId, threadId) {
+  window.CRBLocalPreview?.bind(target, hostId, threadId);
   const attachments = messageAttachments(target, item);
   for (const link of target.querySelectorAll('a.local-file-link')) {
     const attachment = inlineAttachment(link, attachments);
@@ -4291,6 +4362,7 @@ function renderItem(item, choiceState = 'past') {
         record.content.append(review);
       }
       renderAttachments(record.content, item, selected?.host || '', selected?.thread || '');
+      window.CRBLocalPreview?.bind(record.content, selected?.host || '', selected?.thread || '');
     }
   }
   return record.el;
@@ -6589,6 +6661,7 @@ async function openRemoteFilePreview(hostId, entry) {
   tab.hostId = hostId;
   tab.sourcePath = entry.path;
   tab.fileEntry = entry;
+  tab.officeViewOnly = entry.officeViewOnly === true;
   tab.downloader = () => downloadRemoteFile(hostId, entry, tab);
   $('filePreviewDownload').disabled = false;
   if (!kind) {
@@ -6600,6 +6673,14 @@ async function openRemoteFilePreview(hostId, entry) {
     return;
   }
   try {
+    if (kind === 'office') {
+      await window.CRBOffice.open(tab, {
+        status: value => setPreviewStatus(tab, value),
+        changed: () => { if (activeFilePreviewId === tab.id) refreshOfficePreviewActions(tab); },
+        close: retain => closeFilePreviewTab(tab.id, retain)
+      });
+      return;
+    }
     const result = await loadRemoteBlob(hostId, entry.path, previewLimits[kind],
       tab, kind === 'text' || kind === 'markdown');
     if (tab.closed) return;
@@ -6624,6 +6705,7 @@ async function cancelRemoteFileEdit(tab) {
 
 async function openRemoteFileEditor(tab) {
   if (!tab?.key.startsWith('remote/') || tab.closed) return;
+  if (!['text', 'markdown', 'table', 'html'].includes(tab.kind)) return;
   if (tab.editing) return cancelRemoteFileEdit(tab);
   setPreviewStatus(tab, '正在打开文本编辑器…');
   try {
@@ -7883,6 +7965,8 @@ $('loginForm').onsubmit = async event => {
 };
 
 $('logout').onclick = async () => {
+  closeWebPreviewTabs();
+  if ($('filePreviewDialog').open) $('filePreviewDialog').close();
   questionDraftSessions.clear();
   clearQuestionDock();
   await clearOutgoingJournal();
@@ -8365,8 +8449,50 @@ window.visualViewport?.addEventListener('resize', () => {
   showProjectContextMenu(projectContext.hostId, projectContext.projectId,
     parseFloat(menu.style.left), parseFloat(menu.style.top));
 });
-$('filePreviewClose').onclick = () => $('filePreviewDialog').close();
+function closeWebPreviewTabs() {
+  previewDialogClosing = true;
+  for (const tab of [...filePreviewTabs]) if (tab.kind === 'web') void closeFilePreviewTab(tab.id);
+  previewDialogClosing = false;
+}
+$('filePreviewClose').onclick = () => {
+  closeWebPreviewTabs();
+  $('filePreviewDialog').close();
+};
+$('filePreviewDialog').addEventListener('cancel', closeWebPreviewTabs);
+$('filePreviewDialog').addEventListener('close', () => {
+  // A tab may reopen the dialog before an older queued close event arrives.
+  if (previewModeChanging || $('filePreviewDialog').open) return;
+  document.body.classList.remove('preview-split-open');
+  closeWebPreviewTabs();
+});
+$('filePreviewSplit').onclick = () => {
+  const dialog = $('filePreviewDialog');
+  previewSplit = !previewSplit;
+  previewModeChanging = true;
+  $('filePreviewSplit').disabled = true;
+  dialog.addEventListener('close', () => {
+    previewModeChanging = false;
+    if (activeFilePreview() && !$('workspace').hidden) showFilePreview();
+    $('filePreviewSplit').disabled = false;
+  }, {once: true});
+  dialog.close();
+  $('filePreviewSplit').textContent = previewSplit ? '集中查看' : '并排查看';
+};
 $('filePreviewEdit').onclick = () => openRemoteFileEditor(activeFilePreview());
+$('filePreviewOfficeSave').onclick = async () => {
+  const tab = activeFilePreview();
+  if (!tab?.office) return;
+  try { await window.CRBOffice.save(tab.office); }
+  catch (error) { setPreviewStatus(tab, error.message); }
+};
+$('filePreviewOfficeRecovery').onclick = () => {
+  const tab = activeFilePreview();
+  if (tab?.office) window.CRBOffice.download(tab.office);
+};
+$('filePreviewOfficeRetain').onclick = () => {
+  const tab = activeFilePreview();
+  if (tab?.office && confirm('保留编辑副本并关闭？再次打开此文件可重试保存或下载副本。')) closeFilePreviewTab(tab.id, true);
+};
 $('filePreviewAttach').onclick = () => openRemoteFileAttach(activeFilePreview());
 $('fileAttachCancel').onclick = () => $('fileAttachDialog').close();
 $('fileAttachForm').onsubmit = attachRemoteFileToThread;

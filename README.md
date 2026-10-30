@@ -23,6 +23,10 @@
 
 各桌面应用支持的功能不同，面板会显示对应的可用操作。
 
+源码新增：服务端可一键安装共享 ONLYOFFICE Docs 文档组件，各客户端共用，在面板编辑 Word、Excel、PPT 并保存回目标电脑；当前 0.6.70 安装包尚不包含。说明见 [文档编辑引擎](docs/DOCUMENT_EDITING.md)。
+
+源码新增：[本地网页预览](docs/LOCAL_WEB_PREVIEW.md)，可通过目标客户端查看 localhost 面板、实时日志和图表；当前安装包尚不包含。
+
 ## 下载与要求
 
 [GitHub 发行版](https://github.com/Gabriel0224/CodeRelayBridge/releases)

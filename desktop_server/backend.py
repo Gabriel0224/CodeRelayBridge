@@ -32,6 +32,40 @@ def suggested_panel_url(bind, port):
 
 class ServerManager:
 
+    def document_settings(self):
+        from crb.server.office import settings_path
+        path = settings_path(self.config())
+        data = json.loads(path.read_text(encoding='utf-8')) if path.exists() else {}
+        return {key: data.get(key, False if key == 'enabled' else '') for key in ('enabled', 'editor_url', 'service_url', 'callback_url')} | {'managed': bool(data.get('managed_owner'))} | {'secretConfigured': bool(data.get('jwt_secret'))}
+
+    def save_document_settings(self, **fields):
+        from crb.server.office import save_settings
+        save_settings(self.config(), **fields)
+        return '文档引擎配置已保存，无需重启服务。'
+
+    def managed_document(self, action, progress=lambda text: None):
+        from crb.server.office_engine import Setup
+        setup = Setup(self.config(), progress)
+        return setup.install() if action == 'install' else setup.status() if action == 'status' else setup.action(action)
+
+    def check_document_engine(self):
+        from crb.server.office import load_settings, OfficeManager
+        settings = load_settings(self.config())
+        if not settings['enabled']:
+            raise ClientError('请先安装并启用文档组件，或保存已有引擎配置。')
+        if settings.get('managed_owner'):
+            if not self.managed_document('status').get('healthy'):
+                raise ClientError('文档引擎尚未就绪，请点击安装并启用继续检查。')
+            return '文档引擎连接正常。'
+        manager = OfficeManager(self.config(), None, None)
+        try:
+            if manager.http(settings).request(settings['service_url'] + '/healthcheck', limit=1024).strip() != b'true':
+                raise ClientError('文档引擎健康检查未通过。')
+        finally:
+            if manager.gateway:
+                manager.gateway.close()
+        return '文档引擎连接正常。'
+
     def __init__(self, root=None, home=None):
         self.root, self.home = (Path(root or server_root()), Path(home or Path.home()))
         self.root.mkdir(parents=True, exist_ok=True)
@@ -55,6 +89,9 @@ class ServerManager:
             raise ClientError('尚未配置服务器，请先在“连接与首次设置”创建或导入配置。') from error
 
     def use_existing(self, path):
+        if self.config_path().exists():
+            from crb.server.office_engine import assert_idle
+            assert_idle(self.config())
         path = Path(path).expanduser().resolve()
         cfg = json.loads(path.read_text(encoding='utf-8-sig'))
         if not all((k in cfg for k in ('bind', 'port', 'state_dir', 'session_secret', 'password_sha256', 'agents'))):
@@ -94,6 +131,8 @@ class ServerManager:
         if not self.config_path().exists():
             return self.create(bind, port, url, username, password)
         cfg = self.config()
+        from crb.server.office_engine import assert_idle
+        assert_idle(cfg)
         if cfg.get('client_login_mode') != 'local':
             raise ClientError('现有服务使用外部登录；请在外部登录入口管理密码，未覆盖原配置。')
         generated = suggested_panel_url(bind, port)
@@ -155,6 +194,8 @@ class ServerManager:
         if status.get('terminals'):
             raise ClientError('网页终端仍打开，请先关闭后接管服务器')
         cfg = self.config()
+        from crb.server.office_engine import assert_idle
+        assert_idle(cfg)
         import sqlite3, subprocess
         from crb.server.persistence import relay_database
         database = relay_database(cfg['state_dir'])
@@ -226,7 +267,10 @@ class ServerManager:
     def control(self, operation):
         if operation not in {'start', 'pause', 'restart'}:
             raise ClientError('未知服务操作。')
-        self.config()
+        cfg = self.config()
+        if operation in ('pause', 'restart'):
+            from crb.server.office_engine import assert_idle
+            assert_idle(cfg)
         if self.legacy_service():
             import subprocess
             action = {'start': 'start', 'pause': 'stop', 'restart': 'restart'}[operation]

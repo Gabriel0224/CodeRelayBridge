@@ -11,10 +11,16 @@ def path_key(value):
         value = value[4:]
     return os.path.normcase(os.path.realpath(os.path.expanduser(value)))
 
-def project_id_map(home):
-    """Only the current local Codex home; never another connected host's IDs."""
+def _desktop_state(home):
     try:
         state = json.loads((Path(home) / '.codex-global-state.json').read_text(encoding='utf-8-sig'))
+        return state if isinstance(state, dict) else {}
+    except (OSError, ValueError, TypeError, UnicodeError):
+        return {}
+
+def _project_id_map(home, state):
+    """Only the current local Codex home; never another connected host's IDs."""
+    try:
         scopes = state.get('app-server-project-id-by-legacy-project-id-by-host', {})
         if not isinstance(scopes, dict):
             return {}
@@ -24,6 +30,34 @@ def project_id_map(home):
         return {key: value for key, value in matches[0].items() if isinstance(key, str) and key and isinstance(value, str) and value}
     except (OSError, ValueError, TypeError, AttributeError):
         return {}
+
+def project_id_map(home):
+    return _project_id_map(home, _desktop_state(home))
+
+def thread_project_memberships(home, project_ids):
+    """Explicit Desktop memberships, including removal from a project.
+
+    Missing keys allow the older database/folder fallback. Present None values
+    must not fall back: deleted, cloud and explicitly projectless memberships
+    cannot borrow a different project's shared directory.
+    """
+    state = _desktop_state(home)
+    mapping = _project_id_map(home, state)
+    assignments = state.get('thread-project-assignments', {})
+    hosts = state.get('thread-project-membership-host-ids', {})
+    hosts = hosts if isinstance(hosts, dict) else {}
+    result = {}
+    if isinstance(assignments, dict):
+        for thread, value in assignments.items():
+            if not isinstance(thread, str) or not isinstance(value, dict) or (not isinstance(value.get('projectId'), str)) or (hosts.get(thread, 'local') != 'local'):
+                continue
+            project = mapping.get(value['projectId'], value['projectId'])
+            result[thread] = project if value.get('projectKind') == 'local' and project in project_ids else None
+    projectless = state.get('projectless-thread-ids', [])
+    for thread in projectless if isinstance(projectless, list) else []:
+        if isinstance(thread, str) and hosts.get(thread, 'local') == 'local':
+            result[thread] = None
+    return result
 
 def local_projects(value):
     rows = value.get('projects', []) if isinstance(value, dict) else []
