@@ -87,6 +87,13 @@
     }
     try { await launch(tab, host, url); } catch (error) { setPreviewStatus(tab, error.message); }
   }
+  function restore(host) {
+    const active = activeFilePreview();
+    const tab = active?.kind === 'web' && (!host || active.hostId === host) ? active :
+      [...filePreviewTabs].reverse().find(item => item.kind === 'web' && (!host || item.hostId === host));
+    if (tab) { activateFilePreview(tab.id); return; }
+    void open(host);
+  }
   function textLinks(value, host) {
     const urls = [...new Set((value.match(/https?:\/\/(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?(?:\/[^\s<>"'`)]*)?/g) || []).filter(local))].slice(0, 8);
     if (!urls.length) return null;
@@ -136,7 +143,9 @@
     if (event.data.type === 'open' && local(event.data.url) && navigator.userActivation.isActive) void open(tab.hostId, event.data.url);
   });
   addEventListener('pagehide', () => { for (const tab of filePreviewTabs) if (tab.kind === 'web') release(tab); });
-  byId('localPreviewToggle').onclick = byId('filePreviewWeb').onclick = () => { void open(typeof currentHost === 'function' ? currentHost()?.id : ''); };
+  const selectedHost = () => typeof currentHost === 'function' ? currentHost()?.id : '';
+  byId('localPreviewToggle').onclick = () => restore((byId('filePreviewDialog').open ?
+    activeFilePreview()?.hostId : byId('terminalHostSelect').value) || selectedHost());
   byId('localPreviewForm').onsubmit = event => {
     event.preventDefault(); const tab = activeFilePreview(); if (tab?.kind !== 'web') return;
     void launch(tab, byId('localPreviewHost').value, byId('localPreviewUrl').value).catch(error => setPreviewStatus(tab, error.message));

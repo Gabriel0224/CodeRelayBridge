@@ -2261,10 +2261,35 @@ let previewModeChanging = false;
 
 function showFilePreview() {
   if (previewDialogClosing) return;
+  // One visible feature surface: returning to a mode restores its own pane.
+  if (terminalPanelOpen) hideTerminalPanel();
   const dialog = $('filePreviewDialog');
   dialog.classList.toggle('preview-split', previewSplit);
   document.body.classList.toggle('preview-split-open', previewSplit);
   if (!dialog.open) previewSplit ? dialog.show() : dialog.showModal();
+  syncExtensionNavigation();
+  syncTerminalPanelPolling();
+}
+
+function syncExtensionNavigation() {
+  const preview = $('filePreviewDialog').open;
+  const navigation = $('extensionsNavigation');
+  const owner = $(preview ? 'filePreviewNavigation' : 'terminalNavigation');
+  // Move only the controls: the preview iframe and its live state stay put.
+  if (navigation.parentElement !== owner) owner.append(navigation);
+  const tab = preview ? activeFilePreview() : null;
+  const view = tab ? (tab.kind === 'web' ? 'web' : 'files') : terminalView;
+  for (const [id, mode] of [['terminalModeTerminal', 'terminal'], ['terminalModeFiles', 'files'],
+    ['terminalModeAgents', 'agents'], ['localPreviewToggle', 'web']]) {
+    $(id).setAttribute('aria-selected', String(view === mode));
+  }
+  const host = catalog.find(item => item.id === (tab ? tab.hostId : $('terminalHostSelect').value));
+  const physical = host && (catalog.find(item => item.id === physicalHostId(host)) || host);
+  $('terminalModeTerminal').disabled = !physical?.terminal?.supported;
+  $('terminalModeFiles').disabled = !physical?.terminal?.supported;
+  $('terminalModeAgents').hidden = !physical || applicationId(physical) !== 'codex' ||
+    (!tab && applicationId(currentHost()) === 'deepseek') ||
+    !physical.threads?.some(thread => typeof thread.isSubagent === 'boolean');
 }
 
 function activeFilePreview() {
@@ -5975,9 +6000,7 @@ function applyTerminalView() {
     `${host?.label || '目标电脑'} · 浏览、编辑、加入对话` : session ?
       `${session.hostLabel} · ${session.shell} · ${session.cwd}` :
       `${host?.label || '目标电脑'} · 尚未启动 SSH 终端`;
-  $('terminalModeTerminal').setAttribute('aria-selected', String(!files && !agents));
-  $('terminalModeFiles').setAttribute('aria-selected', String(files));
-  $('terminalModeAgents').setAttribute('aria-selected', String(agents));
+  syncExtensionNavigation();
   $('newTerminal').hidden = agents;
   $('terminalTabs').hidden = files || agents;
   $('terminalStack').hidden = files || agents;
@@ -6070,6 +6093,20 @@ function openProjectFileDirectory(hostId, path) {
 }
 
 function setTerminalView(view) {
+  const preview = $('filePreviewDialog');
+  if (preview.open) {
+    const tab = activeFilePreview();
+    const host = catalog.find(item => item.id === tab?.hostId);
+    const hostId = host ? physicalHostId(host) : tab?.hostId;
+    if ([...$('terminalHostSelect').options].some(option => option.value === hostId)) {
+      $('terminalHostSelect').value = hostId;
+    }
+    preview.close();
+    closeMobilePanels();
+    syncTerminalControls();
+    terminalView = ['files', 'agents'].includes(view) ? view : 'terminal';
+    showTerminalPanel();
+  }
   terminalView = ['files', 'agents'].includes(view) ? view : 'terminal';
   applyTerminalView();
   syncTerminalPanelPolling();
@@ -7314,7 +7351,7 @@ function showTerminalPanel() {
 }
 
 function syncTerminalPanelPolling() {
-  if (!terminalPanelOpen || terminalView !== 'terminal' || document.hidden) {
+  if (!terminalPanelOpen || terminalView !== 'terminal' || document.hidden || $('workspace').hidden || $('filePreviewDialog').open) {
     clearInterval(terminalListTimer);
     terminalListTimer = null;
     clearTimeout(scheduleTerminalPoll.timer);
@@ -7562,6 +7599,7 @@ function syncTerminalControls() {
   $('newTerminal').disabled = !enabled;
   $('terminalEmptyCreate').disabled = !enabled;
   $('newTerminal').title = enabled ? `通过 SSH 连接 ${host.label}` : '没有可用的 SSH 目标';
+  syncExtensionNavigation();
 }
 
 let terminalsRestored = false;
@@ -8455,15 +8493,16 @@ function closeWebPreviewTabs() {
   previewDialogClosing = false;
 }
 $('filePreviewClose').onclick = () => {
-  closeWebPreviewTabs();
   $('filePreviewDialog').close();
 };
-$('filePreviewDialog').addEventListener('cancel', closeWebPreviewTabs);
 $('filePreviewDialog').addEventListener('close', () => {
   // A tab may reopen the dialog before an older queued close event arrives.
   if (previewModeChanging || $('filePreviewDialog').open) return;
   document.body.classList.remove('preview-split-open');
-  closeWebPreviewTabs();
+  syncExtensionNavigation();
+  syncTerminalPanelPolling();
+  // Hiding the pane keeps files and web pages alike. A tab's close button,
+  // logout and page exit still release its forwarding session explicitly.
 });
 $('filePreviewSplit').onclick = () => {
   const dialog = $('filePreviewDialog');

@@ -3,13 +3,14 @@ import json
 import os
 from pathlib import Path
 
-def path_key(value):
+def path_key(value, *, resolve=True):
     value = str(value or '')
     if value.startswith('\\\\?\\UNC\\'):
         value = '\\\\' + value[8:]
     elif value.startswith('\\\\?\\'):
         value = value[4:]
-    return os.path.normcase(os.path.realpath(os.path.expanduser(value)))
+    expanded = os.path.expanduser(value)
+    return os.path.normcase(os.path.realpath(expanded) if resolve else os.path.abspath(expanded))
 
 def _desktop_state(home):
     try:
@@ -24,10 +25,13 @@ def _project_id_map(home, state):
         scopes = state.get('app-server-project-id-by-legacy-project-id-by-host', {})
         if not isinstance(scopes, dict):
             return {}
-        matches = [value for key, value in scopes.items() if isinstance(key, str) and key.startswith('local:') and (path_key(key[6:]) == path_key(home)) and isinstance(value, dict)]
-        if len(matches) != 1:
+        matches = [(key, value) for key, value in scopes.items() if isinstance(key, str) and key.startswith('local:') and (path_key(key[6:]) == path_key(home)) and isinstance(value, dict)]
+        exact = [value for key, value in matches if path_key(key[6:], resolve=False) == path_key(home, resolve=False)]
+        choices = exact or [value for _, value in matches]
+        mappings = [{key: value for key, value in choice.items() if isinstance(key, str) and key and isinstance(value, str) and value} for choice in choices]
+        if not mappings or any((mapping != mappings[0] for mapping in mappings[1:])):
             return {}
-        return {key: value for key, value in matches[0].items() if isinstance(key, str) and key and isinstance(value, str) and value}
+        return mappings[0]
     except (OSError, ValueError, TypeError, AttributeError):
         return {}
 

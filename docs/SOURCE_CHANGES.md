@@ -2,6 +2,14 @@
 
 Published installers: Windows and Ubuntu / Mint **0.6.76**; macOS **0.6.75**. The v0.6.76 tag preserves the accepted native sources for the reasoning-summary palette correction. Mac is currently offline and retains its verified v0.6.75 installers. Each download cell keeps its actual published version.
 
+## 0.6.78 Project memberships survive data-directory aliases
+
+Keep Desktop project memberships when a migrated Codex data directory is also reachable through its old junction or symlink. Prefer the current directory's own project ID mapping; accept agreeing aliases and reject conflicting aliases without an exact match. Other computers and unrelated data directories remain isolated. This fixes Windows project conversations being incorrectly grouped as unassigned.
+
+## 0.6.77 Shared feature navigation and preserved web previews
+
+The preview pane's hide button and Escape keep web tabs, their forwarding sessions and in-page state, just as they keep file previews. The Local web entries restore an existing web tab for the selected computer instead of opening a blank tab. Closing a web tab still releases its session; logout and leaving the panel retain their cleanup behavior. The same Terminal, Files, Subagents and Local web navigation stays visible inside full and split previews. Selecting another feature switches directly to its pane, follows the preview’s computer, and retains the web page for a return visit.
+
 ## 0.6.76 Reasoning summaries follow the selected palette
 
 Use the current palette for the reasoning summary background, border and heading, with the normal readable text color in both light and dark modes. Quota and error notices keep their semantic colors.
