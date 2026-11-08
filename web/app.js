@@ -1400,7 +1400,7 @@ function applyLitePatches(base, patches) {
 
 function liteCatalogPath() {
   return '/api/lite/catalog' + (liteCatalogVersion ?
-    `?version=${encodeURIComponent(liteCatalogVersion)}&patch=1` : '');
+    `?version=${encodeURIComponent(liteCatalogVersion)}&patch=2` : '');
 }
 
 function clearThreadSnapshots() {
@@ -1582,15 +1582,25 @@ async function preloadNextThread() {
   }
 }
 
-function applyLiteCatalogPatch(hosts, patches) {
-  const changes = new Map((patches || []).map(item => [item.id, item]));
-  return hosts.map(host => {
-    const patch = changes.get(host.id);
-    if (!patch) return host;
-    const threads = new Map((patch.threads || []).map(item => [item.id, item]));
-    return {...host, ...(patch.set || {}),
-      threads: (host.threads || []).map(item => threads.get(item.id) || item)};
-  });
+function applyLiteCatalogPatch(hosts, patches, hostOrder = null) {
+  const values = new Map(hosts.map(host => [host.id, host]));
+  const ordered = (values, order) => {
+    if (!Array.isArray(order) || order.length !== values.size ||
+        new Set(order).size !== values.size || order.some(id => !values.has(id))) {
+      throw new Error('Invalid catalog patch order');
+    }
+    return order.map(id => values.get(id));
+  };
+  for (const patch of patches || []) {
+    if (patch.removed) { values.delete(patch.id); continue; }
+    const host = values.get(patch.id) || {id: patch.id, threads: []};
+    const threads = new Map((host.threads || []).map(item => [item.id, item]));
+    for (const id of patch.removedThreads || []) threads.delete(id);
+    for (const row of patch.threads || []) threads.set(row.id, row);
+    values.set(patch.id, {...host, ...(patch.set || {}),
+      threads: patch.threadOrder ? ordered(threads, patch.threadOrder) : [...threads.values()]});
+  }
+  return hostOrder ? ordered(values, hostOrder) : [...values.values()];
 }
 
 function showLogin() {
@@ -7655,7 +7665,8 @@ async function refresh(seed = null) {
       data = await api('/api/lite/catalog');
     }
     if (Array.isArray(data.hostPatches)) {
-      data.hosts = applyLiteCatalogPatch(catalog, data.hostPatches);
+      try { data.hosts = applyLiteCatalogPatch(catalog, data.hostPatches, data.hostOrder); }
+      catch (_) { data = await api('/api/lite/catalog'); }
     }
     if (data.version) liteCatalogVersion = data.version;
     if (data.generation && data.generation !== relayGeneration) {

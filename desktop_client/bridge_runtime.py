@@ -1,6 +1,7 @@
 """The EXE's no-GUI worker mode; no system Python or external .py launcher."""
 from __future__ import annotations
 import ctypes
+import gzip
 import importlib
 import io
 import json
@@ -20,6 +21,7 @@ from desktop_client.edition import edition
 from desktop_client.connections import ConnectionStore, atomic_json, client_root
 from desktop_client.backend import redact
 from desktop_client.reconnect import ConnectionRetry, RetryDeferred, EXHAUSTED_EXIT_CODE
+from crb.common.catalog_sync import CatalogSync, wire_body
 
 class WorkerLease:
     """Same-user instance guard. Harness shares the legacy launcher's mutex."""
@@ -90,7 +92,7 @@ def cached_byte_count(value):
         return 0
 
 class SyncMeter:
-    """Observe only existing sync requests. Never issues additional requests."""
+    """Meter sync bodies and negotiate acknowledged metadata without extra polls."""
 
     def __init__(self, key, config, root=None, logger=None):
         self.key = key
@@ -101,6 +103,7 @@ class SyncMeter:
         self.agent = None
         self.local_access = None
         self.client_control = None
+        self.catalog_sync = CatalogSync()
         self.logger = logger if logger is not None else logging.getLogger('relay-worker-' + key)
         self.publish_failures = 0
         self.retry = ConnectionRetry()
@@ -177,17 +180,43 @@ class SyncMeter:
                     fullurl = meter.client_control.decorate(fullurl, meter.local_access)
                 elif meter.local_access:
                     fullurl = meter.local_access.decorate(fullurl)
-            sent = len(fullurl.data or b'') if isinstance(fullurl, urllib.request.Request) else len(data or b'')
             if not meter.retry.begin('relay'):
                 raise RetryDeferred('Waiting for the next connection attempt')
             started = time.monotonic()
             try:
-                with original(opener, fullurl, data, timeout) as response:
-                    raw = response.read()
-                    value = json.loads(raw)
-                    if not isinstance(value, dict) or not isinstance(value.get('commands', []), list):
-                        raise ValueError('Invalid relay response')
-                meter.success(sent, len(raw), time.monotonic() - started)
+                encoded = fullurl.data if isinstance(fullurl, urllib.request.Request) else data
+                compressed = isinstance(fullurl, urllib.request.Request) and fullurl.get_header('Content-encoding') == 'gzip'
+                try:
+                    payload = json.loads(gzip.decompress(encoded) if compressed else encoded)
+                except (TypeError, ValueError, OSError):
+                    payload = None
+                optimized = isinstance(payload, dict) and 'catalog' in payload
+                for attempt in range(2 if optimized else 1):
+                    if not optimized:
+                        with original(opener, fullurl, data, timeout) as response:
+                            raw = response.read()
+                            value = json.loads(raw)
+                        if not isinstance(value, dict) or not isinstance(value.get('commands', []), list):
+                            raise ValueError('Invalid relay response')
+                        meter.success(len(encoded or b''), len(raw), time.monotonic() - started)
+                        break
+                    body, coding = wire_body(meter.catalog_sync.prepare(payload, force_full=bool(attempt)))
+                    headers = {key: value for key, value in fullurl.header_items() if key.lower() not in ('content-encoding', 'content-length')} if isinstance(fullurl, urllib.request.Request) else {}
+                    if coding:
+                        headers['Content-Encoding'] = coding
+                    request = urllib.request.Request(url, data=body, headers=headers, method='POST')
+                    with original(opener, request, None, timeout) as response:
+                        raw = response.read()
+                        value = json.loads(raw)
+                        if not isinstance(value, dict) or not isinstance(value.get('commands', []), list):
+                            raise ValueError('Invalid relay response')
+                    meter.success(len(body), len(raw), time.monotonic() - started)
+                    if isinstance(value.get('catalogSync'), dict) and value['catalogSync'].get('resync'):
+                        if attempt:
+                            raise ValueError('Relay did not accept full catalog sync')
+                        continue
+                    meter.catalog_sync.acknowledge(value)
+                    break
                 meter.retry.success('relay')
                 if meter.client_control:
                     meter.client_control.acknowledge(fullurl)

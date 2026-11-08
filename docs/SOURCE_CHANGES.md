@@ -1,3 +1,9 @@
+## 0.6.79
+
+- Reduce native client traffic with acknowledged metadata deltas and automatic cache recovery.
+- Compress smaller sync payloads and transfer browser catalog additions, removals and ordering changes incrementally.
+- Keep existing web previews updating until their own tab is closed.
+
 # Source changes and installer availability
 
 Published installers: Windows, Ubuntu / Mint and macOS **0.6.78**. The v0.6.78 tag preserves the accepted native sources for project memberships across data-directory aliases and the shared preview navigation. Each download cell identifies its verified published installer.

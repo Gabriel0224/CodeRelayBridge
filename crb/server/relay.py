@@ -19,6 +19,7 @@ import shlex
 import shutil
 import signal
 import secrets
+from crb.common.catalog_sync import receive_metadata
 import socket
 import sqlite3
 import struct
@@ -623,7 +624,21 @@ class Relay:
         return hosts
 
     @staticmethod
-    def catalog_patch(before, after):
+    def catalog_patch(before, after, structural=False):
+        if structural:
+            previous = {host['id']: host for host in before}
+            current = {host['id']: host for host in after}
+            patches = [{'id': key, 'removed': True} for key in previous if key not in current]
+            for key, host in current.items():
+                old = previous.get(key, {})
+                old_rows = {row['id']: row for row in old.get('threads', [])}
+                new_rows = {row['id']: row for row in host.get('threads', [])}
+                patch = {'id': key, 'set': {field: value for field, value in host.items() if field not in ('threads', 'id') and old.get(field) != value}, 'threads': [row for rid, row in new_rows.items() if old_rows.get(rid) != row]}
+                if list(old_rows) != list(new_rows):
+                    patch.update(threadOrder=list(new_rows), removedThreads=[rid for rid in old_rows if rid not in new_rows])
+                if key not in previous or patch['set'] or patch['threads'] or ('threadOrder' in patch):
+                    patches.append(patch)
+            return patches
         if [host['id'] for host in before] != [host['id'] for host in after]:
             return None
         patches = []
@@ -1130,10 +1145,13 @@ def handler_factory(app):
                             app.catalog_versions[version] = (title, json.loads(json.dumps(hosts)), workspace)
                             if len(app.catalog_versions) > 96:
                                 del app.catalog_versions[next(iter(app.catalog_versions))]
-                        patch = app.catalog_patch(previous[1], hosts) if previous and previous[0] == title else None
+                        structural = params.get('patch', [''])[0] == '2'
+                        patch = app.catalog_patch(previous[1], hosts, structural=structural) if previous and previous[0] == title else None
                     response = {'version': version, 'uiTitle': title, 'hosts': None if known == version else hosts}
-                    if known != version and patch is not None and (params.get('patch', [''])[0] == '1'):
+                    if known != version and patch is not None and (params.get('patch', [''])[0] in ('1', '2')):
                         candidate = {'baseVersion': known, 'hostPatches': patch}
+                        if structural and [host['id'] for host in previous[1]] != [host['id'] for host in hosts]:
+                            candidate['hostOrder'] = [host['id'] for host in hosts]
                         if len(json.dumps(candidate, ensure_ascii=False).encode()) < len(encoded) * 0.8:
                             response = {'version': version, 'uiTitle': title, 'hosts': None, **candidate}
                     response['appVersion'] = PROGRAM_VERSION
@@ -1395,7 +1413,12 @@ def handler_factory(app):
                 if app.client_pairing.is_revoked(supplied):
                     return self.response(401, {'error': 'Agent credential was revoked'})
                 state = app.hosts.setdefault(host, {'views': {}})
+                received = receive_metadata(data, state.get('_catalog_base'))
+                if received is None:
+                    return self.response(200, {'generation': app.generation, 'commands': [], 'catalogSync': {'protocol': 1, 'resync': True}})
+                data, catalog_base = received
                 incoming = {'label': data['label'], 'catalog': data['catalog'], 'applicationId': enrolled['applicationId'] if enrolled else app.cfg.get('application_nodes', {}).get(host, {}).get('applicationId', 'codex'), 'physicalHostId': enrolled['physicalHostId'] if enrolled else app.cfg.get('application_nodes', {}).get(host, {}).get('physicalHostId', host), 'capabilities': data.get('capabilities', {}), 'projects': data.get('projects', []), 'models': data.get('models', []), 'terminal': data.get('terminal', {'supported': False}), 'desktopConnected': data.get('desktopConnected', False)}
+                state['_catalog_base'] = catalog_base
                 changed = any((state.get(key) != value for key, value in incoming.items()))
                 changed = any((state.get(key) != value for key, value in incoming.items()))
                 changed = changed or not state.get('_online', True) or time.time() - state.get('seen', 0) >= HOST_ONLINE_TTL
@@ -1448,6 +1471,8 @@ def handler_factory(app):
             if changed:
                 app.signal()
             response = {'generation': app.generation, 'commands': [dict(zip(('id', 'thread', 'action', 'text'), row)) for row in rows] + secure_rows}
+            if catalog_base is not None:
+                response['catalogSync'] = {'protocol': 1, 'hash': catalog_base['hash']}
             if state.get('capabilities', {}).get('nativeLiveOutput') is True:
                 response['liveOutputDemand'] = app.live_output_demand(host)
             return self.response(200, response)
