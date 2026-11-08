@@ -303,8 +303,8 @@
       "exportSha256": "519a6f64ac762ab089f13ce90d2960c0c1eab3adfc3a1b909cfde8f0edc4ed50"
     },
     "desktop_client/bridge_runtime.py": {
-      "canonicalSha256": "71b1d79768e0abab989572ce3628e233ed4dca12031cefbcb07e6078781e20c2",
-      "exportSha256": "2ff4d5230630a9554d186168699b55172017a5ad50511a978bfa12f70890b290"
+      "canonicalSha256": "536fba07b86cd8bed09f2411cece696688c4269ce2c92997ebab985f82aa1164",
+      "exportSha256": "91c36cdda38c0c31b810696a7ee23a75979136c089e6f71142944e825876999a"
     },
     "desktop_client/bundle_core.py": {
       "canonicalSha256": "17d1eec9f113cd80b2bd1a6e7df716c02112131f7ab0112eb314e0dd613576f6",
@@ -579,8 +579,8 @@
       "exportSha256": "23b7da01925d23b9526f2cc15c858d2501d60b32f53dcb6d7feef7e2e418221f"
     },
     "docs/SOURCE_CHANGES.md": {
-      "canonicalSha256": "875f761f1f4c74d3b5decdaf5d0c40549b03de13f12a05e3a9ef66630d0cf824",
-      "exportSha256": "875f761f1f4c74d3b5decdaf5d0c40549b03de13f12a05e3a9ef66630d0cf824"
+      "canonicalSha256": "859bda322005ca001a33a619e1f3d5475f09da9eeacc35ca6b4dc0d28d37c996",
+      "exportSha256": "859bda322005ca001a33a619e1f3d5475f09da9eeacc35ca6b4dc0d28d37c996"
     },
     "docs/USER_GUIDE.en.md": {
       "canonicalSha256": "273463aaf696fcf5907e3f07ce9b160dcfb3abb842926ebcd5841742150d635a",

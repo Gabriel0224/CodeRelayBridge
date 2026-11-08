@@ -1,6 +1,6 @@
 ## 0.6.79
 
-- Reduce native client traffic with acknowledged metadata deltas and automatic cache recovery.
+- Reduce native client traffic with acknowledged metadata deltas and automatic cache recovery after restarts or rejected requests.
 - Compress smaller sync payloads and transfer browser catalog additions, removals and ordering changes incrementally.
 - Keep existing web previews updating until their own tab is closed.
 

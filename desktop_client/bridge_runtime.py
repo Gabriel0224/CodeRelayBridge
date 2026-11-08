@@ -222,6 +222,7 @@ class SyncMeter:
                     meter.client_control.acknowledge(fullurl)
                 return io.BytesIO(raw)
             except Exception as exc:
+                meter.catalog_sync.acknowledge({})
                 meter.failure(exc)
                 meter.retry.failure('relay')
                 raise
