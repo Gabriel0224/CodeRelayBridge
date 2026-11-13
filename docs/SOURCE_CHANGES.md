@@ -1,3 +1,10 @@
+# 0.6.80 (client only)
+
+- Detect the running Codex Desktop queue protocol and support v3 queue writes and notifications while retaining older Desktop compatibility.
+- Preserve native uncertain-send records during queue deletion and avoid editing or resending messages still being prepared or awaiting confirmation.
+- Use the reviewed native coordinator for interrupted-queue continuation in current Desktop builds; unsupported or unavailable UI channels fail without replaying messages.
+- The relay server remains at 0.6.79. Only client packages change in this release.
+
 ## 0.6.79
 
 - Reduce native client traffic with acknowledged metadata deltas and automatic cache recovery after restarts or rejected requests.

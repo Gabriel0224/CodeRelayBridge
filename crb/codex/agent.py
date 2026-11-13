@@ -40,6 +40,7 @@ import crb.updates.native_updates as software_updates
 from crb.codex.read_progress import ReadProgress
 from crb.codex.native_features import NativeFeatures, public_metadata
 from crb.codex.question_ui import CodexQuestionUI
+from crb.codex.queue_protocol import NativeQueueProtocol
 from crb.codex.native_history import NativeHistoryReader
 from crb.codex.conversation import create_configured
 import crb.codex.sidebar_ui as native_conversation_ui
@@ -1461,6 +1462,8 @@ class HostAgent:
         self.journal.parent.mkdir(parents=True, exist_ok=True, mode=448)
         self.read_progress = ReadProgress(self.journal)
         self.queued_followups = self.read_native_queued_followups()
+        self.queue_protocol = NativeQueueProtocol()
+        self.queue_revisions = {}
         with self.connect_journal() as db:
             db.execute('CREATE TABLE IF NOT EXISTS commands (id TEXT PRIMARY KEY, result TEXT)')
             db.execute('CREATE TABLE IF NOT EXISTS refresh_state (key TEXT PRIMARY KEY, at REAL)')
@@ -1660,18 +1663,31 @@ class HostAgent:
             result.append(entry)
         return result
 
-    def update_native_queue(self, tid, messages, target=None):
+    def update_native_queue(self, tid, messages, target=None, *, discarded_ids=None):
         if not self.ipc or not self.ipc.connected:
             raise RuntimeError('请先在目标机打开 Codex 桌面 App')
         if target is None:
             owner = self.ipc.request('thread-owner-discovery', {'conversationId': tid, 'hostId': 'local'})
             target = owner['handledByClientId']
-        response = self.ipc.request('thread-follower-set-queued-follow-ups-state', {'conversationId': tid, 'state': {tid: messages}}, target=target, timeout=30)
+        protocol = self.queue_protocol.current()
         with self.lock:
-            if messages:
-                self.queued_followups[tid] = copy.deepcopy(messages)
-            else:
-                self.queued_followups.pop(tid, None)
+            before_revision = self.queue_revisions.get(tid, 0)
+        params = {'conversationId': tid, 'state': {tid: messages}}
+        options = {'target': target, 'timeout': 30}
+        if protocol['setter'] != 1:
+            options['version'] = protocol['setter']
+        if protocol['setter'] >= 2:
+            params['discardedMessageIds'] = list(discarded_ids or [])
+        response = self.ipc.request('thread-follower-set-queued-follow-ups-state', params, **options)
+        if (response.get('result') or {}).get('ok') is False:
+            raise RuntimeError('原 App 未接受队列更新')
+        with self.lock:
+            if self.queue_revisions.get(tid, 0) == before_revision:
+                if messages:
+                    self.queued_followups[tid] = copy.deepcopy(messages)
+                else:
+                    self.queued_followups.pop(tid, None)
+                self.queue_revisions[tid] = before_revision + 1
             self.dirty.add(tid)
             self.queue_receipt_dirty.add(tid)
         self.receipt_wakeup.set()
@@ -2227,7 +2243,7 @@ class HostAgent:
                 return
             p = msg.get('params', {})
             method = msg.get('method')
-            if method == 'thread-queued-followups-changed' and msg.get('version') == 2:
+            if method == 'thread-queued-followups-changed' and msg.get('version') in (2, 3):
                 tid = p.get('conversationId')
                 messages = p.get('messages')
                 if p.get('hostId', 'local') == 'local' and tid and isinstance(messages, list) and all((isinstance(message, dict) for message in messages)):
@@ -2235,6 +2251,7 @@ class HostAgent:
                         self.queued_followups[tid] = copy.deepcopy(messages)
                     else:
                         self.queued_followups.pop(tid, None)
+                    self.queue_revisions[tid] = self.queue_revisions.get(tid, 0) + 1
                     self.dirty.add(tid)
                     self.queue_receipt_dirty.add(tid)
                     self.receipt_wakeup.set()
@@ -3729,6 +3746,8 @@ class HostAgent:
                 raise ValueError('这条队列消息已发送或已被删除')
             if action in ('queue_edit', 'queue_send_now') and (native_message_receipt(state, message_id) or native_message_receipt(state, message_id, steering=True)):
                 raise ValueError('这条队列消息已发送或已被删除')
+            if action in ('queue_edit', 'queue_send_now') and (queued[index].get('preparation') is not None or (queued[index].get('submission') or {}).get('status') in ('sending', 'outcome-unknown')):
+                raise RuntimeError('原 App 正在准备或确认这条队列消息；不会重复发送')
             if action == 'queue_edit':
                 queued[index] = self.prepare_queued_images(queued[index])
                 edited_text = str(payload.get('text', '')).strip()
@@ -3746,7 +3765,7 @@ class HostAgent:
                 return {'ok': True, 'transport': 'desktop-native-queue', 'messageId': message_id, 'edited': True, 'confirmedAt': time.time()}
             if action == 'queue_delete':
                 queued.pop(index)
-                self.update_native_queue(tid, queued, target)
+                self.update_native_queue(tid, queued, target, discarded_ids=[message_id])
                 return {'ok': True, 'transport': 'desktop-native-queue', 'messageId': message_id, 'deleted': True, 'confirmedAt': time.time()}
             if action == 'queue_reorder':
                 message_ids = payload.get('messageIds')
@@ -3762,7 +3781,7 @@ class HostAgent:
             message = self.prepare_queued_images(queued[index])
             queued_text, inputs, native_attachments = self.queued_message_inputs(message)
             queued.pop(index)
-            self.update_native_queue(tid, queued, target)
+            self.update_native_queue(tid, queued, target, discarded_ids=[message_id])
             try:
                 active = state.get('threadRuntimeStatus', {}).get('type') == 'active'
                 if active:

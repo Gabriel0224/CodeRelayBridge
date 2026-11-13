@@ -87,6 +87,14 @@
           'app-shared-6fc3d63f0486.js', 'e24dc1a9e516fb12b36edfe2ae984185ca1238787fcc19938501a097b1acd06c', 'v$t', 'U2t'],
       ],
     };
+    const webpackQueues = {
+      linux: ['348410.84751e128f.js', '4969400fac95b6ffab7cb074f38d6608233f50de36c2c764d40f6f9daa7d0dac',
+        'async/739301.001f92e5ca.js', 'f594d5d76f08250a705b52cb88a7b8b57346a617d4ca9bec31e2b801d7eacb10'],
+      win32: ['348410.1a97dde15f.js', '2f366e7066e7dabb445e1e583917f57aa787d04e9c9dcfe684c9c7af47bb0b52',
+        'async/739301.37a39f26d6.js', 'acc2174e4ed3d2068af26c1731f08e8978c853864aea9c0a917ae9d246885058'],
+      darwin: ['348410.1a97dde15f.js', '2f366e7066e7dabb445e1e583917f57aa787d04e9c9dcfe684c9c7af47bb0b52',
+        'async/739301.37a39f26d6.js', 'acc2174e4ed3d2068af26c1731f08e8978c853864aea9c0a917ae9d246885058'],
+    };
     const hash = async bytes => [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))]
       .map(value => value.toString(16).padStart(2, '0')).join('');
     async function verifiedAsset(name, expected) {
@@ -110,15 +118,32 @@
     const candidates = [...(queueContracts[request.platform] || [])].sort((a, b) =>
       Number([...loaded].some(name => name.endsWith('/assets/' + b[0]))) -
       Number([...loaded].some(name => name.endsWith('/assets/' + a[0]))));
-    let contract = null;
-    for (const candidate of candidates) {
-      try {if (await verifiedAsset(candidate[0], candidate[1])) {contract = candidate; break;}} catch (_) {}
+    let contract = null, queueAtom, getRpc;
+    const webpack = webpackQueues[request.platform];
+    // Import only the running App's already loaded entry, so inspection never
+    // starts another UI/runtime. Its reviewed chunk table binds the core asset.
+    const scriptUrls = typeof document !== 'undefined' && document.querySelectorAll
+      ? [...document.querySelectorAll('script[type="module"][src]')].map(node => node.src) : [];
+    const runtimeLoaded = webpack && [...loaded, ...scriptUrls].some(name =>
+      name.split(/[?#]/)[0].endsWith('/assets/' + webpack[0]));
+    if (runtimeLoaded) {
+      if (!await verifiedAsset(webpack[0], webpack[1]) ||
+          !await verifiedAsset(webpack[2], webpack[3])) throw new Error('Unreviewed native queue runtime');
+      const runtime = await import('/assets/' + webpack[0]);
+      const requireNative = runtime.__webpack_require__;
+      if (typeof requireNative !== 'function') throw new Error('Native queue runtime changed');
+      queueAtom = requireNative('MYVk').Ax;
+      getRpc = requireNative('Dgwo').V;
+    } else {
+      for (const candidate of candidates) {
+        try {if (await verifiedAsset(candidate[0], candidate[1])) {contract = candidate; break;}} catch (_) {}
+      }
+      if (!contract) throw new Error('Unreviewed native queue version');
+      if (contract[2] && !await verifiedAsset(contract[2], contract[3])) throw new Error('Unreviewed native queue transport');
+      const native = await import('/assets/' + contract[0]);
+      const shared = contract[2] ? await import('/assets/' + contract[2]) : native;
+      queueAtom = native[contract[5]]; getRpc = shared[contract[4]];
     }
-    if (!contract) throw new Error('Unreviewed native queue version');
-    if (contract[2] && !await verifiedAsset(contract[2], contract[3])) throw new Error('Unreviewed native queue transport');
-    const native = await import('/assets/' + contract[0]);
-    const shared = contract[2] ? await import('/assets/' + contract[2]) : native;
-    const queueAtom = native[contract[5]], getRpc = shared[contract[4]];
     if (!queueAtom?.scope || typeof getRpc !== 'function') throw new Error('Native queue contract changed');
     let scope = null, visits = 0;
     function findScope(fiber) {
@@ -149,8 +174,12 @@
     const coordinator = await getRpc(scope, 'local').getTurnCoordinator();
     // Re-read immediately before dispatch; never revive deleted or reordered items.
     // Unobserved native selectors may produce a fresh but equivalent array.
-    if (fingerprint(read()) !== expected) throw new Error('Native queue changed; refresh before continuing');
-    await coordinator.resumeInterruptedQueuedMessages(request.threadId);
+    try {
+      if (fingerprint(read()) !== expected) throw new Error('Native queue changed; refresh before continuing');
+      await coordinator.resumeInterruptedQueuedMessages(request.threadId);
+    } finally {
+      try {coordinator[Symbol.dispose]?.();} catch (_) {}
+    }
     const after = read();
     return {status: Array.isArray(after) && !after.some(message => message.pausedReason === interrupted)
       ? 'queue-resumed' : 'queue-resume-pending'};
