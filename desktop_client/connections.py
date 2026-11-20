@@ -211,6 +211,39 @@ class ConnectionStore:
         marker['remoteRevoked'] = True
         atomic_json(self.marker_path(key), marker)
 
+    def forget_disconnected(self, key):
+        """Discard an unpaired credential, retaining only a legacy-import guard.
+
+        The intermediate marker makes interrupted credential cleanup retryable.
+        It never means that a remote server acknowledged revocation.
+        """
+        if self.disconnect_pending(key) or self.path(key).exists():
+            raise ValueError('本机连接尚未停止并移除，不能清理旧凭证。')
+        marker = self.pairing_marker(key)
+        name = marker.get('backupName')
+        if name is None:
+            if marker.get('forgotten') is not True:
+                raise ValueError('解除记录缺少旧凭证信息，未删除其他文件。')
+            return
+        backup = self.root / 'backups' / self._backup_name(key, marker)
+        if backup.is_symlink():
+            raise ValueError('旧凭证备份路径异常，未删除其他文件。')
+        data = None
+        if backup.exists():
+            data = json.loads(backup.read_text(encoding='utf-8'))
+            self.validate(data)
+            if data['host_id'] != marker.get('hostId') or data['relay_url'] != marker.get('relayUrl'):
+                raise ValueError('旧凭证身份不匹配，未删除其他连接。')
+        marker.update(forgotten=True, forgetting=True)
+        atomic_json(self.marker_path(key), marker)
+        legacy = self.legacy_path(key)
+        if data is not None and legacy.exists() and (not legacy.is_symlink()):
+            old = json.loads(legacy.read_text(encoding='utf-8-sig'))
+            if all((old.get(field) == data.get(field) for field in ('host_id', 'relay_url', 'agent_token'))):
+                legacy.unlink()
+        backup.unlink(missing_ok=True)
+        atomic_json(self.marker_path(key), {'forgotten': True, 'remoteRevoked': marker.get('remoteRevoked', False)})
+
     @staticmethod
     def validate(data):
         validate_relay_url(data.get('relay_url', ''))

@@ -1,3 +1,7 @@
+# 0.6.83 (Windows, Linux and macOS clients)
+
+- Complete local unpairing even when the former server is unreachable or its IP address has changed. Remove old credentials and unblock new pairing without claiming unconfirmed remote revocation. Keep interrupted local cleanup retryable and preserve other applications.
+
 # 0.6.82 (Windows and Linux server)
 
 - Keep local server status readable while document components download or install; report status failures instead of leaving the initial loading message visible.

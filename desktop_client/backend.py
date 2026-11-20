@@ -401,7 +401,9 @@ class BridgeManager:
                         item.update(pairing_cancelled=True, unpair_pending=False)
                         try:
                             marker = store.pairing_marker(spec.key)
-                            item['unpair_pending'] = not marker.get('remoteRevoked', False)
+                            item['unpair_pending'] = not marker.get('remoteRevoked', False) and (not marker.get('forgotten', False))
+                            if marker.get('forgetting'):
+                                item.update(unpair_cleanup_pending=True, unpair_pending=True)
                         except (OSError, ValueError):
                             item.update(pairing_record_error=True, error='解除配对记录无法读取，请检查诊断日志；不会恢复旧配置或授权。')
             except Exception as exc:

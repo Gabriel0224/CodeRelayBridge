@@ -167,7 +167,7 @@ class SetupDialog(QDialog):
             super().reject()
 
 class UnpairDialog(QDialog):
-    """Explicit per-application revoke, with honest offline-only fallback."""
+    """Unpair locally even when the previous server no longer exists."""
 
     def __init__(self, owner, service, key):
         super().__init__(owner)
@@ -189,11 +189,11 @@ class UnpairDialog(QDialog):
         body.setContentsMargins(0, 0, 8, 0)
         body.setSpacing(14)
         body.addWidget(note('只处理这台电脑的 ' + title + ' 桥接，不影响其他应用或其他电脑。'))
-        body.addWidget(note('将停止本应用的后台同步、关闭其网页终端、移除启动任务，并向服务器撤销连接授权。再次使用需重新配对。'))
+        body.addWidget(note('停止本应用的后台同步并清除本机连接和旧凭证；同时尝试撤销服务器授权。服务器不可达也能完成本机移除，并重新配对。'))
         body.addWidget(note('不会退出或重启桌面 App，不删除聊天、项目和文件。解除配对使用已保存的连接凭证，不需要再输入网页登录密码。'))
-        self.local_only = QCheckBox('仅断开本机，不撤销服务器授权')
+        self.local_only = QCheckBox('旧服务器已停用：直接移除，不再联系旧服务器')
         body.addWidget(self.local_only)
-        body.addWidget(note('仅在服务器不可达时使用。此方式不等于完全解除配对，后续可在配对管理中补撤销授权。'))
+        body.addWidget(note('不会保留旧连接凭证或要求补撤销。无法联系旧服务器时，不会声称远端授权已撤销。'))
         self.result = note('确认后才会执行；取消不会改变连接。')
         self.result.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         body.addWidget(self.result)
@@ -220,7 +220,7 @@ class UnpairDialog(QDialog):
         self.working = True
         for control in (self.cancel, self.confirm, self.local_only):
             control.setEnabled(False)
-        self.result.setText('正在断开本机并' + ('保留远端授权…' if local_only else '撤销服务器授权…'))
+        self.result.setText('正在移除本机旧连接…' if local_only else '正在解除配对；服务器不可达也会完成本机移除…')
         self.owner.busy_key = self.key
         self.owner.set_controls_busy(True)
         self.owner.submit('unpair', lambda: self.service.disconnect(self.key, local_only))

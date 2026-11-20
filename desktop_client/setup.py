@@ -215,47 +215,27 @@ class SetupService:
         spec = self.manager.specs[key]
         continuing = self.store.disconnect_pending(key)
         if not continuing and self.store.unpaired(key):
-            marker = self.store.pairing_marker(key)
-            if marker.get('remoteRevoked'):
-                return spec.title + ' 配对已经解除。'
-            if local_only:
-                return spec.title + ' 本机已经断开；远端授权尚未撤销。'
-            data = self.store.disconnected_config(key)
-            self.remote_factory(data['relay_url']).forget(data, key)
-            self.store.finish_revoke(key)
-            return spec.title + ' 远端授权已补撤销；原 App 的聊天和项目保持不变。'
+            self.store.forget_disconnected(key)
+            return spec.title + ' 本机旧连接和凭证已移除，可以重新配对。'
         data = self.store.disconnect_config(key) if continuing else self.store.load(key)
         self.store.validate(data)
         exists = self.manager.tasks.exists(spec)
-        original = self.manager.tasks.inspect(spec) if exists else {}
+        if exists:
+            self.manager.tasks.inspect(spec)
         procs, _ = matching_processes(spec, self.manager.processes())
         if procs and (not exists):
             raise ClientError('有桥接进程但没有匹配的启动任务，未擅自终止；请先修复后台。')
-        running = bool(procs)
         if not continuing:
             self.store.begin_disconnect(key, data)
         revoked = self.store.disconnect_record(key)['remoteRevoked']
-        try:
-            if exists:
-                self.manager.control(key, 'pause')
-            if not local_only and (not revoked):
+        if exists:
+            self.manager.control(key, 'pause')
+        if not local_only and (not revoked):
+            try:
                 self.remote_factory(data['relay_url']).forget(data, key)
                 revoked = True
-        except RevocationUnconfirmed:
-            raise ClientError('本机桥接已暂停；远端撤销结果待确认，请点击“继续解除”。不会恢复旧凭证，原 App 未被停止。') from None
-        except Exception:
-            if continuing:
-                raise ClientError('解除配对仍待完成，请检查连接后继续解除；不会恢复旧授权。') from None
-            try:
-                self.store.abort_disconnect(key)
-            except (OSError, ValueError):
-                raise ClientError('解除操作未完成，恢复记录仍待处理；请继续解除，未恢复旧授权。') from None
-            if exists:
-                if running:
-                    self.manager.control(key, 'start')
-                else:
-                    self.manager.tasks.enable(spec, original.get('enabled', False))
-            raise
+            except ClientError:
+                pass
         if revoked and (not self.store.disconnect_record(key)['remoteRevoked']):
             try:
                 self.store.record_disconnect_revoked(key)
@@ -268,9 +248,10 @@ class SetupService:
             raise ClientError('后台已暂停，远端授权' + ('已撤销' if revoked else '未撤销') + '；启动任务清理失败，请重试解除配对。原 App 未被停止。') from None
         try:
             self.store.complete_disconnect(key)
+            self.store.forget_disconnected(key)
         except (OSError, ValueError):
-            raise ClientError('远端授权' + ('已撤销' if revoked else '尚未确认撤销') + '；本地清理待完成，请点击“继续解除”。不会恢复旧凭证。') from None
-        return spec.title + (' 配对已解除：本机后台与远端授权均已移除。' if revoked else ' 本机已断开：后台已移除，但远端授权尚未撤销，可在配对管理中补撤销。') + '\n原 App 的聊天、项目和文件保持不变。'
+            raise ClientError('本地清理待完成：旧连接和凭证尚未全部移除，请点击“继续解除”。不会恢复旧凭证。') from None
+        return spec.title + (' 配对已解除：本机后台与远端授权均已移除。' if revoked else ' 本机连接和旧凭证已移除，可以重新配对。远端授权未确认撤销。') + '\n原 App 的聊天、项目和文件保持不变。'
 
     def installation_id(self):
         path = self.store.root / 'installation.json'
@@ -292,9 +273,7 @@ class SetupService:
             if key not in self.missing():
                 raise ClientError(self.manager.specs[key].title + ' 已有配置，请使用连接设置；首次接入不会覆盖它。')
             if self.store.unpaired(key):
-                marker = self.store.pairing_marker(key)
-                if not marker.get('remoteRevoked'):
-                    raise ClientError('本应用还有未撤销的远端授权，请先在配对管理中“补撤销授权”，再重新配对。')
+                self.store.forget_disconnected(key)
             if self.manager.tasks.exists(self.manager.specs[key]):
                 raise ClientError('发现同名后台任务，未覆盖。请先检查或使用“接管 / 修复”。')
         base = safe_setup_url(base)

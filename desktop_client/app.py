@@ -181,7 +181,7 @@ class BridgeCard(QFrame):
         synced = running and item.get('relay_online', False)
         self.status_label.setText(bridge_status_text(item))
         cfg = item.get('config', {})
-        self.summary.setText('解除记录无法读取；不会恢复旧授权。' if item.get('pairing_record_error') else ('远端授权已撤销；请继续完成本地清理。' if item.get('remote_revoked') else '解除结果待确认；请继续解除，不会恢复旧授权。') if item.get('unpair_cleanup_pending') else '本机已断开，远端授权待撤销。' if item.get('unpair_pending') else '重新配对后即可恢复连接。' if item.get('pairing_cancelled') else '尚未配对，请在配对管理中接入。' if item.get('needs_setup') else '连续 5 次连接未成功，桥接已断开；启动 App 或点击启动桥接可重新连接。' if item.get('retry_exhausted') else f"{cfg.get('label') or cfg.get('host_id') or '本机'} · " + ('网页与桌面已连接' if synced and state.get('desktop_connected') else '后台已同步，请打开桌面 App' if synced else '连接详情可展开查看'))
+        self.summary.setText('解除记录无法读取；不会恢复旧授权。' if item.get('pairing_record_error') else ('远端授权已撤销；请继续完成本地清理。' if item.get('remote_revoked') else '解除结果待确认；请继续解除，不会恢复旧授权。') if item.get('unpair_cleanup_pending') else '旧连接已断开，可清除旧凭证并重新配对。' if item.get('unpair_pending') else '重新配对后即可恢复连接。' if item.get('pairing_cancelled') else '尚未配对，请在配对管理中接入。' if item.get('needs_setup') else '连续 5 次连接未成功，桥接已断开；启动 App 或点击启动桥接可重新连接。' if item.get('retry_exhausted') else f"{cfg.get('label') or cfg.get('host_id') or '本机'} · " + ('网页与桌面已连接' if synced and state.get('desktop_connected') else '后台已同步，请打开桌面 App' if synced else '连接详情可展开查看'))
         if item.get('pairing_record_error'):
             self.detail.setText(item['error'])
         elif item.get('unpair_cleanup_pending'):
@@ -867,8 +867,8 @@ class MainWindow(QMainWindow):
                 key = item['key']
                 self.config_labels[key].setText(cfg.get('relay_url', ''))
                 self.config_labels[key].setToolTip(cfg.get('relay_url', '尚未接入'))
-                self.pairing_labels[key].setText('解除配对记录异常 · 不会恢复旧授权' if item.get('pairing_record_error') else ('授权已撤销 · 本地清理待完成' if item.get('remote_revoked') else '解除结果待确认 · 不会恢复旧授权') if item.get('unpair_cleanup_pending') else '本机已断开 · 远端授权待撤销' if item.get('unpair_pending') else '已解除配对 · 可重新接入' if item.get('pairing_cancelled') else '尚未配对' if item.get('needs_setup') else f"{cfg.get('label') or '本机'} · 设备 {cfg.get('host_id', '—')} · 独立连接凭证已保存")
-                self.unpair_buttons[key].setText('继续解除' if item.get('unpair_cleanup_pending') else '补撤销授权' if item.get('unpair_pending') else '解除配对')
+                self.pairing_labels[key].setText('解除配对记录异常 · 不会恢复旧授权' if item.get('pairing_record_error') else ('授权已撤销 · 本地清理待完成' if item.get('remote_revoked') else '解除结果待确认 · 不会恢复旧授权') if item.get('unpair_cleanup_pending') else '旧连接已断开 · 可清除并重新配对' if item.get('unpair_pending') else '已解除配对 · 可重新接入' if item.get('pairing_cancelled') else '尚未配对' if item.get('needs_setup') else f"{cfg.get('label') or '本机'} · 设备 {cfg.get('host_id', '—')} · 独立连接凭证已保存")
+                self.unpair_buttons[key].setText('继续解除' if item.get('unpair_cleanup_pending') else '清除旧连接' if item.get('unpair_pending') else '解除配对')
                 self.unpair_buttons[key].setEnabled(not self.busy_key and (not item.get('needs_setup') or item.get('unpair_pending', False)))
                 state = '记录异常' if item.get('error') or item.get('pairing_record_error') else '解除待完成' if item.get('unpair_cleanup_pending') else '已解除配对' if item.get('pairing_cancelled') else '未接入' if item.get('needs_setup') else '待修复' if item.get('needs_repair') else '已暂停' if not item.get('enabled', True) else '未连接' if item.get('retry_exhausted') else '已连接' if item.get('relay_online') and item.get('telemetry', {}).get('desktop_connected') else '等待桌面 App' if not item.get('app_running', True) else '连接中'
                 states.append(f"{item['title']} {state}")
