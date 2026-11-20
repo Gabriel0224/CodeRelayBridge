@@ -2274,7 +2274,7 @@ class HostAgent:
             tid = p.get('conversationId')
             if p.get('hostId', 'local') != 'local' or not tid:
                 return
-            if method != 'thread-stream-state-changed' or msg.get('version') != 11:
+            if method != 'thread-stream-state-changed' or msg.get('version') not in (11, 13):
                 return
             ch = p.get('change', {})
             if ch.get('type') == 'snapshot':

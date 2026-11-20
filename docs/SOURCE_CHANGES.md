@@ -1,3 +1,7 @@
+# 0.6.81 (Mac client; local deployment)
+
+- Support Codex Desktop 26.1111 realtime conversation stream v13 while retaining v11 snapshots and revision-checked patches. Fix connected clients silently discarding newer native streams and timing out when attaching a chat.
+
 # 0.6.80 (client only)
 
 - Detect the running Codex Desktop queue protocol and support v3 queue writes and notifications while retaining older Desktop compatibility.
