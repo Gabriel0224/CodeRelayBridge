@@ -13,7 +13,7 @@ import threading
 import time
 import urllib.request
 import uuid
-from desktop_server.document_service import EngineResources, HELPER, IMAGE, SOCKETS, identity, private_json, socket_request
+from desktop_server.document_service import EngineResources, HELPER, IMAGE, SOCKETS, identity, private_json, socket_request, pull_image, stream_command
 from crb.server.office_wire import WIRE_SOURCE
 RUNTIMES = {('Windows', 'amd64'): ('win/main/amd64/244584/Docker%20Desktop%20Installer.exe', '2668273f82b342a058a28f9ab53ea7bddde10bb6d51307ce2ec54c2d36459744'), ('Darwin', 'arm64'): ('mac/main/arm64/244584/Docker.dmg', '94e4ccec4a035b7dcdf67cfff0520d4b46ee873ae04b155abc0d22b333cc90ad'), ('Darwin', 'amd64'): ('mac/main/amd64/244584/Docker.dmg', '98da1a82dac734ba6a14c3e0379f5655ce0bd52a04cf8bb47f4e4642c914f695')}
 
@@ -62,6 +62,7 @@ def docker_command(data):
     def command(args, timeout=30):
         return subprocess.run(prefix + args, capture_output=True, timeout=timeout, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
     command.prefix = prefix
+    command.pull = lambda progress: pull_image(prefix, progress)
     return command
 
 def runtime(data=None):
@@ -118,8 +119,18 @@ def install_desktop(progress):
         digest = hashlib.sha256()
         size = 0
         with urllib.request.urlopen('https://desktop.docker.com/' + entry[0], timeout=60) as source, package.open('wb') as output:
+            try:
+                total = int(getattr(source, 'headers', {}).get('Content-Length', 0)) or None
+            except (ValueError, TypeError):
+                total = None
+            if total is not None and (not 0 < total <= 2 * 1024 ** 3):
+                raise ValueError('运行环境下载超过上限')
+            updated = time.monotonic()
+            previous = 0
+            progress({'message': '正在下载运行环境…', 'current': 0, 'total': total})
+            read = getattr(source, 'read1', source.read)
             while True:
-                block = source.read(1024 * 1024)
+                block = read(256 * 1024)
                 if not block:
                     break
                 size += len(block)
@@ -127,8 +138,17 @@ def install_desktop(progress):
                     raise ValueError('运行环境下载超过上限')
                 digest.update(block)
                 output.write(block)
+                now = time.monotonic()
+                if now - updated >= 0.25:
+                    progress({'message': '正在下载运行环境…', 'current': size, 'total': total, 'speed': (size - previous) / (now - updated)})
+                    updated, previous = (now, size)
+            if total is not None and size != total:
+                raise ValueError('运行环境下载不完整，请重试')
+            progress({'message': '正在下载运行环境…', 'current': size, 'total': total})
+        progress('正在校验运行环境安装包…')
         if digest.hexdigest() != entry[1]:
             raise ValueError('运行环境安装包校验失败，未执行')
+        progress('运行环境下载与校验完成，正在打开官方安装程序…')
         if os.name == 'nt':
             result = subprocess.run([str(package), 'install', '--user'], timeout=1800)
             if result.returncode not in (0, 3010):
@@ -154,13 +174,23 @@ def install_desktop(progress):
                 subprocess.run(['/usr/bin/hdiutil', 'detach', str(mount)], check=True, capture_output=True, timeout=60)
     start_desktop()
 
-def authorize(action, data):
+def authorize(action, data, progress=lambda value: None):
     if not HELPER.is_file():
         raise ValueError('请先使用新版服务端 DEB 安装器安装系统文档管理组件')
     command = ['/usr/bin/pkexec', '/usr/bin/python3', '-I', str(HELPER), action, data['owner']]
     if action == 'install':
         command += ['--uid', str(os.getuid())]
-    result = subprocess.run(command, input=json.dumps({'secret': data['secret']}).encode(), capture_output=True, timeout=2400)
+
+    def update(line):
+        if len(line) > 4096:
+            return
+        try:
+            value = json.loads(line).get('progress')
+        except (ValueError, AttributeError):
+            return
+        if isinstance(value, (str, dict)):
+            progress(value)
+    result = stream_command(command, update, 2400, input=json.dumps({'secret': data['secret']}).encode())
     if result.returncode:
         raise ValueError('系统安装未完成或授权已取消；可点击“安装并启用”重试')
 
@@ -208,14 +238,14 @@ class Setup:
         data = state(self.config, False) or {'owner': uuid.uuid4().hex, 'secret': secrets.token_urlsafe(48), 'image': IMAGE, 'mode': 'pending'}
         self.remember(data)
         if data['mode'] == 'system':
-            authorize('install', data)
+            authorize('install', data, self.progress)
         else:
             detected = runtime(data if data['mode'] == 'direct' else None)
             if detected is None and platform.system() == 'Linux':
                 self.progress('请在系统授权窗口确认安装文档运行环境…')
                 data['systemAttempted'] = True
                 self.remember(data)
-                authorize('install', data)
+                authorize('install', data, self.progress)
                 data['mode'] = 'system'
                 self.remember(data)
             else:

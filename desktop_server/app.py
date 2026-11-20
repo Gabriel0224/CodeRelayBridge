@@ -2,7 +2,7 @@
 import sys
 from PySide6.QtCore import QThreadPool, QTimer, QUrl, Qt, Signal
 from PySide6.QtGui import QAction, QDesktopServices
-from PySide6.QtWidgets import QApplication, QFileDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox, QPlainTextEdit, QPushButton, QSpinBox, QStackedWidget, QCheckBox, QSystemTrayIcon, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget, QHeaderView
+from PySide6.QtWidgets import QApplication, QFileDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox, QPlainTextEdit, QPushButton, QSpinBox, QStackedWidget, QCheckBox, QSystemTrayIcon, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget, QHeaderView, QProgressBar
 from desktop_client.app import STYLE, Work, SingleInstance, app_icon, note, scroll_page
 from desktop_client.platform_support import platform_name
 from desktop_server.backend import ServerManager, suggested_panel_url
@@ -13,7 +13,7 @@ from desktop_client.i18n import QAction, QFileDialog, QLabel, QLineEdit, QMainWi
 from desktop_client.edition import edition_label
 
 class ServerWindow(QMainWindow):
-    documentProgress = Signal(str)
+    documentProgress = Signal(object)
 
     def __init__(self, manager=None, background_updates=True):
         super().__init__()
@@ -26,7 +26,10 @@ class ServerWindow(QMainWindow):
         self.setMinimumSize(740, 540)
         self.pool = QThreadPool(self)
         self.pool.setMaxThreadCount(1)
+        self.status_pool = QThreadPool(self)
+        self.status_pool.setMaxThreadCount(1)
         self.busy = False
+        self.operation_key = ''
         self.status_pending = False
         self.operation_generation = 0
         self.status_generation = 0
@@ -122,7 +125,10 @@ class ServerWindow(QMainWindow):
         layout.addWidget(note('安装共享文档编辑组件后，连接本服务端的电脑均可使用，无需逐台安装。支持 Word、Excel、PPT 的现代格式编辑，修改经校验后保存回目标电脑；旧格式以只读方式打开。'))
         self.document_state = note('尚未检查文档组件状态。')
         layout.addWidget(self.document_state)
-        self.documentProgress.connect(self.document_state.setText)
+        self.documentProgress.connect(self.show_document_progress)
+        self.document_progress_bar = QProgressBar()
+        self.document_progress_bar.hide()
+        layout.addWidget(self.document_progress_bar)
         operations = QHBoxLayout()
         for action, label in [('install', '安装并启用'), ('start', '启动组件'), ('stop', '停止组件'), ('status', '检查组件状态'), ('remove', '移除组件')]:
             button = QPushButton(label)
@@ -174,7 +180,34 @@ class ServerWindow(QMainWindow):
         if self.busy:
             return
         self.document_state.setText('正在处理文档组件，请稍候…')
+        self.document_progress_bar.setRange(0, 0)
+        self.document_progress_bar.setVisible(action == 'install')
         self.submit('document-' + action, lambda: self.manager.managed_document(action, self.documentProgress.emit))
+
+    def show_document_progress(self, value):
+        if not isinstance(value, dict):
+            self.document_state.setText(str(value))
+            self.document_progress_bar.setRange(0, 0)
+            return
+        current, total = (value.get('current', 0), value.get('total'))
+        self.document_progress_bar.show()
+        if total:
+            self.document_progress_bar.setRange(0, 1000)
+            self.document_progress_bar.setValue(min(1000, int(current * 1000 / total)))
+            amount = f'{current / 1024 ** 2:.1f} / {total / 1024 ** 2:.1f} MiB'
+        else:
+            self.document_progress_bar.setRange(0, 0)
+            amount = f'{current / 1024 ** 2:.1f} MiB'
+        speed = value.get('speed', 0)
+        text = str(value.get('message', '正在下载文档编辑组件…')) + '\n' + amount
+        if speed:
+            text += f' · {speed / 1024 ** 2:.2f} MiB/s'
+        if value.get('detail'):
+            text += '\n' + str(value['detail'])
+        self.document_state.setText(text)
+
+    def status_allowed(self):
+        return not self.busy or self.operation_key.startswith('document-')
 
     def load_document_settings(self):
         if not self.manager.config_path().exists():
@@ -306,7 +339,7 @@ class ServerWindow(QMainWindow):
 
     def submit(self, key, callback):
         if key == 'status':
-            if self.busy or self.status_pending:
+            if not self.status_allowed() or self.status_pending:
                 return
             self.status_pending = True
             self.status_generation = self.operation_generation
@@ -314,19 +347,22 @@ class ServerWindow(QMainWindow):
             if self.busy:
                 return
             self.busy = True
+            self.operation_key = key
             self.operation_generation += 1
             for b in self.controls:
                 b.setEnabled(False)
         job = Work(key, callback)
         job.signals.done.connect(self.done)
         job.signals.failed.connect(self.failed)
-        self.pool.start(job)
+        (self.status_pool if key == 'status' else self.pool).start(job)
+        if key.startswith('document-'):
+            self.refresh()
 
     def done(self, key, value):
         if key == 'status':
             self.status_pending = False
-            if self.status_generation != self.operation_generation or self.busy:
-                if not self.busy:
+            if self.status_generation != self.operation_generation or not self.status_allowed():
+                if self.status_allowed():
                     self.refresh()
                 return
             self.apply_status(value)
@@ -346,6 +382,7 @@ class ServerWindow(QMainWindow):
                     self.submit('restore-after-update', lambda: self.manager.control('start'))
             return
         if key.startswith('document-'):
+            self.document_progress_bar.hide()
             self.load_document_settings()
             if isinstance(value, dict):
                 self.document_state.setText('文档组件已就绪。' if value.get('healthy') else '文档组件未就绪，请点击安装并启用；已有组件可重试。')
@@ -392,9 +429,11 @@ class ServerWindow(QMainWindow):
     def failed(self, key, error):
         if key == 'status':
             self.status_pending = False
-            if self.status_generation == self.operation_generation and (not self.busy):
-                self.notice.setText(error)
-            elif not self.busy:
+            if self.status_generation == self.operation_generation and self.status_allowed():
+                self.status_label.setText('读取本机服务状态失败，稍后自动重试。' + '\n' + error)
+                if not self.busy:
+                    self.notice.setText(error)
+            elif self.status_allowed():
                 self.refresh()
             return
         self.busy = False
@@ -403,6 +442,8 @@ class ServerWindow(QMainWindow):
         self.notice.setText(error)
         if key.startswith('document-'):
             self.document_state.setText(error)
+            self.document_progress_bar.hide()
+        self.refresh()
         if key == 'crb-update-stop':
             self.timer.start(5000)
             self.update_dialog.failed('install', error)

@@ -8,6 +8,7 @@ import argparse
 import hashlib
 import json
 import os
+import queue
 from pathlib import Path
 import re
 import shutil
@@ -25,6 +26,109 @@ PARTS = {'logs': '/var/log/onlyoffice', 'lib': '/var/lib/onlyoffice', 'data': '/
 HELPER = Path('/opt/coderelaybridge/server/office-runtime/service.py')
 MANIFESTS = Path('/etc/coderelaybridge-office')
 SOCKETS = Path('/run/coderelaybridge-office')
+
+def stream_command(args, on_line, timeout, *, input=None, env=None):
+    """Bounded output and timeout; kill/reap only the subprocess we started."""
+    process = subprocess.Popen(args, stdin=subprocess.PIPE if input is not None else subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+    chunks = queue.Queue(maxsize=16)
+    stopped = threading.Event()
+
+    def read_output():
+        try:
+            while not stopped.is_set():
+                block = process.stdout.read1(4096)
+                while not stopped.is_set():
+                    try:
+                        chunks.put(block, timeout=0.2)
+                        break
+                    except queue.Full:
+                        pass
+                if not block:
+                    return
+        except (OSError, ValueError):
+            stopped.set()
+        finally:
+            process.stdout.close()
+    reader = threading.Thread(target=read_output, daemon=True)
+    reader.start()
+    deadline = time.monotonic() + timeout
+    pending = b''
+    try:
+        if input is not None:
+            try:
+                process.stdin.write(input)
+                process.stdin.close()
+            except BrokenPipeError:
+                pass
+        while True:
+            if time.monotonic() >= deadline:
+                raise subprocess.TimeoutExpired(args, timeout)
+            try:
+                block = chunks.get(timeout=0.2)
+            except queue.Empty:
+                if stopped.is_set():
+                    raise OSError('文档组件进度读取中断')
+                continue
+            if not block:
+                if pending:
+                    on_line(pending.decode('utf-8', errors='replace'))
+                break
+            lines = re.split(b'[\\r\\n]', pending + block)
+            pending = lines.pop()[-65536:]
+            for line in lines:
+                if line:
+                    on_line(line.decode('utf-8', errors='replace'))
+        code = process.wait(timeout=max(0.01, deadline - time.monotonic()))
+        return subprocess.CompletedProcess(args, code, b'', b'')
+    finally:
+        if process.poll() is None:
+            process.kill()
+        process.wait()
+        stopped.set()
+        reader.join(2)
+        if process.stdin is not None:
+            try:
+                process.stdin.close()
+            except BrokenPipeError:
+                pass
+
+class PullProgress:
+    """Publish only recognized layer metadata, never arbitrary CLI output."""
+
+    def __init__(self, progress):
+        self.progress, self.layers, self.updated = (progress, {}, 0)
+
+    def line(self, text):
+        match = re.fullmatch('([a-f0-9]{1,64}): (Pulling fs layer|Waiting|Downloading|Verifying Checksum|Download complete|Extracting|Pull complete|Already exists)(?:\\s+(.*))?', text.strip())
+        if not match:
+            return
+        identity, phase, detail = match.groups()
+        old = self.layers.get(identity, {'current': 0, 'total': None})
+        current, total = (old['current'], old['total'])
+        size = re.search('([\\d.]+)([kMGT]?B|[KMGT]iB)\\s*/\\s*([\\d.]+)([kMGT]?B|[KMGT]iB)', detail or '')
+        if size:
+            units = {'B': 1, 'kB': 1000, 'MB': 1000 ** 2, 'GB': 1000 ** 3, 'TB': 1000 ** 4, 'KiB': 1024, 'MiB': 1024 ** 2, 'GiB': 1024 ** 3, 'TiB': 1024 ** 4}
+            try:
+                received, expected = (int(float(size[1]) * units[size[2]]), int(float(size[3]) * units[size[4]]))
+                if phase == 'Downloading' and 0 <= received <= expected <= 64 * 1024 ** 3:
+                    current, total = (max(current, received), expected)
+            except (ValueError, OverflowError):
+                pass
+        if phase in ('Download complete', 'Pull complete') and total:
+            current = total
+        self.layers[identity] = {'current': current, 'total': total, 'phase': phase}
+        now = time.monotonic()
+        if now - self.updated < 0.25 and phase in ('Downloading', 'Extracting'):
+            return
+        self.updated = now
+        complete = sum((row['phase'] in ('Already exists', 'Pull complete') for row in self.layers.values()))
+        self.progress({'message': '正在下载文档编辑组件…', 'current': sum((row['current'] for row in self.layers.values())), 'total': None, 'detail': f'已就绪 {complete} / {len(self.layers)} 个已发现组件层'})
+
+def pull_image(prefix, progress, *, env=None):
+    progress('正在下载文档编辑组件…')
+    result = stream_command([*prefix, 'pull', IMAGE], PullProgress(progress).line, 1800, env=env)
+    if result.returncode:
+        raise ValueError('文档组件下载失败，请检查网络和可用空间后重试')
 
 def identity(value):
     if not isinstance(value, str) or not re.fullmatch('[0-9a-f]{32}', value):
@@ -95,7 +199,11 @@ class EngineResources:
             self.start()
             return
         self.progress('正在下载文档编辑组件…')
-        self.run('pull', IMAGE, timeout=1800)
+        pull = getattr(self.command, 'pull', None)
+        if callable(pull):
+            pull(self.progress)
+        else:
+            self.run('pull', IMAGE, timeout=1800)
         self.progress('正在初始化文档编辑组件…')
         mounts = []
         for part, destination in PARTS.items():
@@ -175,6 +283,10 @@ def socket_request(path, request, timeout=30):
 def root_command(args, timeout=30):
     environment = {'PATH': '/usr/bin:/bin', 'LANG': 'C.UTF-8', 'DOCKER_HOST': 'unix:///var/run/docker.sock', 'DOCKER_CONFIG': '/var/lib/coderelaybridge-office/docker-cli'}
     return subprocess.run(['/usr/bin/docker', *args], capture_output=True, timeout=timeout, env=environment)
+
+def root_pull(progress):
+    pull_image(['/usr/bin/docker'], progress, env={'PATH': '/usr/bin:/bin', 'LANG': 'C.UTF-8', 'DOCKER_HOST': 'unix:///var/run/docker.sock', 'DOCKER_CONFIG': '/var/lib/coderelaybridge-office/docker-cli'})
+root_command.pull = root_pull
 
 def root_manifest(owner):
     path = MANIFESTS / (identity(owner) + '.json')
@@ -334,6 +446,7 @@ def main():
         if not Path('/usr/bin/docker').is_file():
             if not Path('/usr/bin/apt-get').is_file():
                 raise ValueError('此系统尚不支持自动安装运行环境')
+            print(json.dumps({'progress': '正在安装系统文档运行环境，请等待系统安装完成…'}, ensure_ascii=True), flush=True)
             with tempfile.TemporaryDirectory(prefix='crb-runtime-packages-') as cache:
                 subprocess.run(['/usr/bin/apt-get', 'update'], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=600)
                 subprocess.run(['/usr/bin/apt-get', '-y', '-o', 'Dir::Cache::archives=' + cache, 'install', '--no-install-recommends', 'docker.io'], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=1200)
@@ -346,7 +459,7 @@ def main():
                 raise ValueError('文档服务登记不匹配，未修改')
         else:
             private_json(path, {'owner': args.owner, 'uid': args.uid, 'secret': secret, 'imageOwned': not EngineResources(args.owner, root_command).image_present()})
-        resources = EngineResources(args.owner, root_command)
+        resources = EngineResources(args.owner, root_command, lambda value: print(json.dumps({'progress': value}, ensure_ascii=True), flush=True))
         resources.install(secret)
         if unit.is_symlink() or (unit.exists() and unit.read_text() != unit_text(args.owner)):
             raise ValueError('文档服务启动项无效')

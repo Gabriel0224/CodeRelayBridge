@@ -1,3 +1,8 @@
+# 0.6.82 (server manager; local deployment)
+
+- Keep local server status readable while document components download or install; report status failures instead of leaving the initial loading message visible.
+- Show runtime download bytes, total size when available and speed, followed by verification and installation stages. Stream document image layer progress without inventing an overall percentage or exposing raw subprocess output.
+
 # 0.6.81 (Mac client; local deployment)
 
 - Support Codex Desktop 26.1111 realtime conversation stream v13 while retaining v11 snapshots and revision-checked patches. Fix connected clients silently discarding newer native streams and timing out when attaching a chat.
