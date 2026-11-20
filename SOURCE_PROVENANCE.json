@@ -587,12 +587,12 @@
       "exportSha256": "479fa53fba38e1c1589207b69c5be65f388c67677847df56cb281d81f5067b25"
     },
     "docs/USER_GUIDE.en.md": {
-      "canonicalSha256": "273463aaf696fcf5907e3f07ce9b160dcfb3abb842926ebcd5841742150d635a",
-      "exportSha256": "273463aaf696fcf5907e3f07ce9b160dcfb3abb842926ebcd5841742150d635a"
+      "canonicalSha256": "873c0b9b8b735cba70a8c8260c17d7d7cf5ffe7695faf3c7b25314cf31421f1b",
+      "exportSha256": "873c0b9b8b735cba70a8c8260c17d7d7cf5ffe7695faf3c7b25314cf31421f1b"
     },
     "docs/USER_GUIDE.zh-CN.md": {
-      "canonicalSha256": "7db43abcc0e1b5b1ae186d21df17b4a09bcd30f5c733b5b98e98e513fc0bc8f0",
-      "exportSha256": "7db43abcc0e1b5b1ae186d21df17b4a09bcd30f5c733b5b98e98e513fc0bc8f0"
+      "canonicalSha256": "59644cd3879f4cae743d99d66af19c90688c5ecd4e8a04c74a673a69e74d7c33",
+      "exportSha256": "59644cd3879f4cae743d99d66af19c90688c5ecd4e8a04c74a673a69e74d7c33"
     },
     "docs/images/crb-empty-desktop.png": {
       "canonicalSha256": "1e67a2f4e9c4ae4f6461ffd3cdbf289c5b7bb678c45492362a933fb54559ac9f",
@@ -643,8 +643,8 @@
       "exportSha256": "26feadc76fb37746f2980038b335708e51c7fa9987cc4d5e567f209e2fe64a17"
     },
     "release_tools/repository_readme.py": {
-      "canonicalSha256": "c3eed40bed53d3374a94faa6d16b18768350dd81cd01865a8e1c37e65e6ab1e0",
-      "exportSha256": "6e23ff278b5ab54cc385db063b10285082c5acd4825be8760cf9736ba913ee6b"
+      "canonicalSha256": "db2abe5b1a58493a7d06a5fa0b7c651b35bdcce771abf64637d9ffe1aee53ecf",
+      "exportSha256": "11d304bccad6aa2373d83628985909e7dd84a6a4c19e3d834f5f54d09e469586"
     },
     "release_tools/sanitize_native_build_paths.py": {
       "canonicalSha256": "91654c85f76c230690acab36795f818bcb1830a3834504daea5dd4c185eaf343",

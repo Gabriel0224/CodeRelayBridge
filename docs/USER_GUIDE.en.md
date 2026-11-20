@@ -109,8 +109,8 @@ The panel supports bookmarkable addresses: `/main` opens the home view, `/chat/c
 - **“关闭并断开”** (Close and disconnect) stops client-owned bridges and disconnects; it does not delete the original AI Apps or their history.
 - **“关闭窗口时最小化到托盘（保持接入）”** keeps enrollment active when closing the window. Use the explicit disconnect/quit action for full exit. A missing tray cannot be used to maintain a hidden, inaccessible client.
 - Pausing a bridge neither closes the original App nor revokes device authorization.
-- Unpair the selected application in pairing management to stop its bridge and request server-side revocation; the web password is not needed again.
-- **“仅断开本机”** (Disconnect locally only) is an emergency option when the server is unreachable. It does not revoke server authorization; finish revocation later.
+- Unpair the selected application in pairing management to stop its bridge, remove the old local connection, and attempt server-side revocation; the web password is not needed again. An unreachable server no longer blocks local removal or new pairing.
+- For a retired server, select **“旧服务器已停用：直接移除，不再联系旧服务器”** (Remove locally without contacting the retired server). Unconfirmed remote revocation is reported honestly and does not block new pairing. If the former server remains in use, revoke that old device separately in its device management.
 - Server **“停止服务” / “重启服务”** disconnects the panel and its terminals, not original model tasks. Closing its management UI is different from explicitly stopping its service.
 
 ## 7. Recommended: Tailscale across networks
