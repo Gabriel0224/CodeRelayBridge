@@ -315,11 +315,16 @@ def repair(value, password=None):
         return apply_plan(value)
     if not getattr(sys, 'frozen', False):
         raise ClientError('系统修复请使用完整的原生安装包')
+    return request_authorization(value, password=password)
+
+def request_authorization(value, password=None, helper='--system-authorized'):
+    if helper not in ('--system-authorized', '--server-task-authorized'):
+        raise ClientError('未知系统授权入口')
     with tempfile.TemporaryDirectory(prefix='relay-system-authorize-') as directory:
         source, result = (Path(directory) / 'plan.json', Path(directory) / 'result.json')
         source.write_text(json.dumps(value), encoding='utf-8')
         prepare_authorization_result(result)
-        args = [sys.executable, '--system-authorized', str(source), str(result)]
+        args = [sys.executable, helper, str(source), str(result)]
         if sys.platform == 'win32':
             import win32api, win32con, win32event, win32process
             from win32com.shell import shell, shellcon

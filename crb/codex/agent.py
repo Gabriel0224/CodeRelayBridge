@@ -1669,20 +1669,22 @@ class HostAgent:
         if target is None:
             owner = self.ipc.request('thread-owner-discovery', {'conversationId': tid, 'hostId': 'local'})
             target = owner['handledByClientId']
-        protocol = self.queue_protocol.current()
         with self.lock:
             before_revision = self.queue_revisions.get(tid, 0)
+            before_messages = copy.deepcopy(self.queued_followups.get(tid, []))
+        native_rpc = getattr(getattr(self, 'ipc', None), 'native_rpc', False) is True
+        protocol = {'setter': 3} if native_rpc else self.queue_protocol.current()
         params = {'conversationId': tid, 'state': {tid: messages}}
         options = {'target': target, 'timeout': 30}
         if protocol['setter'] != 1:
             options['version'] = protocol['setter']
         if protocol['setter'] >= 2:
             params['discardedMessageIds'] = list(discarded_ids or [])
-        response = self.ipc.request('thread-follower-set-queued-follow-ups-state', params, **options)
+        response = self.ipc.update_queue(tid, before_messages, messages, list(discarded_ids or [])) if native_rpc else self.ipc.request('thread-follower-set-queued-follow-ups-state', params, **options)
         if (response.get('result') or {}).get('ok') is False:
             raise RuntimeError('原 App 未接受队列更新')
         with self.lock:
-            if self.queue_revisions.get(tid, 0) == before_revision:
+            if not native_rpc and self.queue_revisions.get(tid, 0) == before_revision:
                 if messages:
                     self.queued_followups[tid] = copy.deepcopy(messages)
                 else:
@@ -2218,6 +2220,19 @@ class HostAgent:
         return True
 
     def on_event(self, msg):
+        native_rpc = getattr(getattr(self, 'ipc', None), 'native_rpc', False) is True
+        if msg.get('type') == 'native-rpc-unloaded' and native_rpc:
+            tid = msg.get('conversationId')
+            with self.lock:
+                slot = self.states.get(tid)
+                if slot:
+                    slot['owner'] = None
+                    self.dirty.add(tid)
+            return
+        if msg.get('type') == 'native-rpc-snapshot':
+            if not native_rpc:
+                return
+            msg = {'type': 'broadcast', 'method': 'thread-stream-state-changed', 'version': 'native-rpc-1', 'sourceClientId': msg.get('owner'), 'params': {'hostId': 'local', 'conversationId': msg['conversationId'], 'change': {'type': 'snapshot', 'conversationState': msg['state'], 'revision': msg['revision']}}}
         if msg.get('type') == 'broadcast' and msg.get('method') == 'thread-stream-following-status-requested':
             p = msg.get('params') or {}
             tid, owner = (p.get('conversationId'), msg.get('sourceClientId'))
@@ -2274,7 +2289,7 @@ class HostAgent:
             tid = p.get('conversationId')
             if p.get('hostId', 'local') != 'local' or not tid:
                 return
-            if method != 'thread-stream-state-changed' or msg.get('version') not in (11, 13):
+            if method != 'thread-stream-state-changed' or not (msg.get('version') in (11, 13) or (native_rpc and msg.get('version') == 'native-rpc-1')):
                 return
             ch = p.get('change', {})
             if ch.get('type') == 'snapshot':
@@ -3733,7 +3748,7 @@ class HostAgent:
             expected = payload.get('messageIds')
             if not isinstance(expected, list) or not expected or any((not isinstance(value, str) or not 0 < len(value) <= 200 for value in expected)) or (expected != [message.get('id') for message in queued]):
                 raise RuntimeError('队列内容已经变化，请刷新后重试')
-            result = self.question_ui.resume_queue(tid, expected)
+            result = self.ipc.resume_queue(tid, queued) if getattr(self.ipc, 'native_rpc', False) is True else self.question_ui.resume_queue(tid, expected)
             return {'ok': True, 'transport': 'desktop-native-queue', 'resumed': result['status'] == 'queue-resumed', 'pending': result['status'] == 'queue-resume-pending', 'confirmedAt': time.time()}
         if action in ('queue_edit', 'queue_delete', 'queue_send_now', 'queue_reorder'):
             message_id = str(payload.get('messageId', '')).strip()
@@ -3748,6 +3763,9 @@ class HostAgent:
                 raise ValueError('这条队列消息已发送或已被删除')
             if action in ('queue_edit', 'queue_send_now') and (queued[index].get('preparation') is not None or (queued[index].get('submission') or {}).get('status') in ('sending', 'outcome-unknown')):
                 raise RuntimeError('原 App 正在准备或确认这条队列消息；不会重复发送')
+            if action == 'queue_send_now' and getattr(self.ipc, 'native_rpc', False) is True:
+                result = self.ipc.send_queue_now(tid, queued, message_id)
+                return {'ok': True, 'transport': 'desktop-native-queue', 'messageId': message_id, 'sentNow': result['status'] == 'sent', 'pending': result['status'] == 'queued', 'confirmedAt': time.time()}
             if action == 'queue_edit':
                 queued[index] = self.prepare_queued_images(queued[index])
                 edited_text = str(payload.get('text', '')).strip()
@@ -3818,8 +3836,8 @@ class HostAgent:
                 with self.lock:
                     queued = copy.deepcopy(self.queued_followups.get(tid, []))
                 queued.append(message)
-                self.update_native_queue(tid, queued, target)
-                return {'ok': True, 'transport': 'desktop-native-queue', 'queued': True, 'messageId': command['id'], 'position': len(queued), 'confirmedAt': time.time()}
+                response, _ = self.update_native_queue(tid, queued, target)
+                return {'ok': True, 'transport': 'desktop-native-queue', 'queued': True, 'messageId': (response.get('result') or {}).get('messageId', command['id']), 'position': len(queued), 'confirmedAt': time.time()}
             if not question_ack and (not async_question_replies(text)):
                 turns = state_turns(state)
                 question_retire = [{'turnId': turn['turnId'], 'questionIds': [question['questionItemId'] for question in questions]} for item, questions in pending_async_questions(state) for turn in turns if turn.get('turnId') and any((isinstance(value, dict) and value.get('id') == item.get('id') for value in turn.get('items', [])))][-16:]
@@ -4243,7 +4261,17 @@ class HostAgent:
                     if retry is None or retry.begin('desktop'):
                         try:
                             self.ipc = DesktopIPC(self.desktop_ipc, self.on_event)
-                            self.ipc.connect()
+                            try:
+                                self.ipc.connect()
+                            except OSError as exc:
+                                from crb.codex.desktop_rpc import NativeDesktopRPC, legacy_endpoint_absent
+                                if not legacy_endpoint_absent(exc, sys.platform):
+                                    raise
+                                self.ipc = NativeDesktopRPC(self.home, self.on_event)
+                                try:
+                                    self.ipc.connect()
+                                except Exception as exc:
+                                    raise ConnectionError('原 App 本机接口尚未就绪或版本未适配') from exc
                             if sys.platform.startswith('linux') and (not getattr(self, 'native_output_probe_busy', False)):
                                 self.native_output_probe_busy = True
                                 threading.Thread(target=self.probe_native_output_capability, name='codex-native-output-capability', daemon=True).start()

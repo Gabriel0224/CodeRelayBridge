@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import re
 import secrets
+import sys
 import tempfile
 import threading
 import time
@@ -32,7 +33,14 @@ def atomic_json(path, data):
             json.dump(data, stream, ensure_ascii=False)
             stream.flush()
             os.fsync(stream.fileno())
-        os.replace(temporary, path)
+        for delay in (0.01, 0.02, 0.04, 0.08, 0.16, None):
+            try:
+                os.replace(temporary, path)
+                break
+            except OSError as error:
+                if sys.platform != 'win32' or getattr(error, 'winerror', None) not in {5, 32, 33} or delay is None:
+                    raise
+                time.sleep(delay)
     finally:
         if os.path.exists(temporary):
             os.unlink(temporary)

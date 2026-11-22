@@ -806,6 +806,8 @@ class Relay:
                 raise ValueError('目标设备当前离线')
             capabilities = h.get('capabilities', {})
             if 'actions' in capabilities and action not in capabilities['actions']:
+                if (capabilities.get('clientControl') or {}).get('controlOnly') is True:
+                    raise ValueError('目标客户端的应用桥接已断开；请检查目标机原 App，并在客户端点击“启动桥接”重新连接')
                 raise ValueError('该功能尚未接入目标应用的原生接口')
             thread_actions = {'watch', 'mark_read', 'send', 'steer', 'archive', 'unarchive', 'move_project', 'update_settings', 'fetch_asset', 'edit_user_turn', 'edit_last_user_turn', 'update_permissions', 'load_older', 'attach_thread', 'rename_thread', 'fork_thread', 'upload_asset_chunk', 'attach_local_file', 'queue_edit', 'queue_delete', 'queue_send_now', 'queue_reorder', 'queue_resume', 'resolve_request', 'answer_choice', 'question_control', 'native_read', 'native_action'}
             if action in thread_actions and (not any((row['id'] == tid for row in h['catalog']))):

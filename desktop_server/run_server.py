@@ -73,6 +73,9 @@ def main():
     if len(sys.argv) == 4 and sys.argv[1] == '--system-authorized':
         from desktop_client.system_setup import authorized_main
         return authorized_main(sys.argv[2], sys.argv[3])
+    if len(sys.argv) == 4 and sys.argv[1] == '--server-task-authorized':
+        from desktop_server.task_permissions import authorized_main
+        return authorized_main(sys.argv[2], sys.argv[3])
     if len(sys.argv) >= 3 and sys.argv[1] == '--system-probe':
         from desktop_client.system_setup import probe_args
         from desktop_client.connections import atomic_json

@@ -1,3 +1,13 @@
+# 0.6.84 (Windows and Linux clients and servers)
+
+- Keep Office save metadata atomic when Windows briefly denies replacement while a status reader holds the file; retry only bounded sharing/access errors and preserve the old metadata on failure.
+- macOS source compatibility is included; macOS installers remain at their previously published versions pending native packaging and deployment.
+
+- Adapt reviewed Windows, Linux and macOS Codex Desktop 26.1117 conversation subscriptions to the running App's native AppServerManager RPC when the former IPC listener is absent. Match each platform's verified native asset profile, handle missing Windows named pipes and IPv4/IPv6 loopback listeners, and retain the original path for timeouts or permission errors. Preserve older v11/v13 transport, validate same-user identity, scope subscriptions to requested conversations, and expire disconnected leases without replaying writes. Report a disconnected client bridge separately from unsupported native actions.
+
+- Detect and record Windows server task access failures separately from server reachability. Provide an explicit, administrator-authorized repair for the current user's verified native server task, preserving other ACL entries and the running process.
+- Grant the owning user read/write/execute rights when creating a new server task, and make starting an already running task idempotent.
+
 # 0.6.83 (Windows, Linux and macOS clients)
 
 - Complete local unpairing even when the former server is unreachable or its IP address has changed. Remove old credentials and unblock new pairing without claiming unconfirmed remote revocation. Keep interrupted local cleanup retryable and preserve other applications.

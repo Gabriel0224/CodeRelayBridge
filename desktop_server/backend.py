@@ -262,7 +262,35 @@ class ServerManager:
             result['terminals'] = self.request('/api/panel/status').get('activeTerminals', 0)
         except (OSError, ValueError):
             pass
+        if sys.platform == 'win32':
+            result['taskPermissions'] = self.task_permissions()
         return result
+
+    def task_permissions(self, force=False):
+        from desktop_server import task_permissions
+        cached = getattr(self, '_task_permission_cache', None)
+        if not force and cached and (time.monotonic() - cached[0] < 60):
+            return cached[1]
+        try:
+            value = task_permissions.inspect(self)
+        except Exception:
+            value = {'needsRepair': True, 'checkFailed': True}
+        self._task_permission_cache = (time.monotonic(), value)
+        if value.get('needsRepair'):
+            task_permissions.record(self.root, 'permission-check-failed')
+        return value
+
+    def repair_task_permissions(self):
+        if sys.platform != 'win32':
+            raise ClientError('此修复仅适用于 Windows 服务端。')
+        from desktop_server import task_permissions
+        result = task_permissions.repair()
+        value = self.task_permissions(force=True)
+        if not value.get('present') or value.get('needsRepair'):
+            task_permissions.record(self.root, 'permission-repair-unconfirmed')
+            raise ClientError('当前用户仍无法控制启动任务；请检查系统拒绝规则，未宣称修复成功。')
+        task_permissions.record(self.root, 'permission-repair-verified')
+        return result['message']
 
     def control(self, operation):
         if operation not in {'start', 'pause', 'restart'}:
@@ -277,20 +305,32 @@ class ServerManager:
             subprocess.run(['systemctl', '--user', action, 'codex-desktop-relay.service'], check=True, timeout=25, capture_output=True, text=True)
         else:
             tasks, spec = (self.tasks(), self.spec())
-            if not tasks.exists(spec):
-                if operation == 'pause':
-                    return '服务未安装，无需停止。'
-                tasks.create(spec)
-            if operation in {'pause', 'restart'}:
-                tasks.pause(spec)
-            if operation in {'start', 'restart'}:
-                tasks.start(spec)
+            try:
+                if not tasks.exists(spec):
+                    if operation == 'pause':
+                        return '服务未安装，无需停止。'
+                    tasks.create(spec)
+                if operation in {'pause', 'restart'}:
+                    tasks.pause(spec)
+                if operation in {'start', 'restart'}:
+                    tasks.start(spec)
+            except ClientError as exc:
+                if getattr(exc, 'task_access_denied', False):
+                    from desktop_server.task_permissions import record
+                    record(self.root, 'task-access-denied', exc.task_stage, exc.task_codes)
+                    self._task_permission_cache = None
+                    raise ClientError(str(exc) + ' 请在服务概览点击“修复服务启停权限”。') from None
+                raise
         return {'start': '服务器已启动。', 'pause': '服务器已停止。', 'restart': '服务器已重启。'}[operation]
 
     def log_tail(self):
+        from desktop_server.task_permissions import history
         path = self.root / 'server.log'
         if not path.exists():
-            return '暂无本程序日志；导入的现有服务使用原系统服务日志。'
-        with path.open('rb') as handle:
-            handle.seek(max(0, path.stat().st_size - 32768))
-            return redact(handle.read().decode('utf-8', errors='replace'))
+            text = '暂无本程序日志；导入的现有服务使用原系统服务日志。'
+        else:
+            with path.open('rb') as handle:
+                handle.seek(max(0, path.stat().st_size - 32768))
+                text = handle.read().decode('utf-8', errors='replace')
+        diagnostic = history(self.root)
+        return redact(text + ('\n启动任务权限记录：\n' + diagnostic if diagnostic else ''))

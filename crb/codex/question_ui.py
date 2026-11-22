@@ -61,7 +61,7 @@ def discover_debugger():
             listeners = [c for c in proc.net_connections(kind='tcp') if c.status == psutil.CONN_LISTEN and c.laddr.port == port]
             if not listeners or any((c.laddr.ip not in {'127.0.0.1', '::1'} for c in listeners)):
                 continue
-            endpoints.append({'pid': proc.pid, 'created': proc.create_time(), 'exe': info['exe'], 'port': port, 'owner': owner})
+            endpoints.append({'pid': proc.pid, 'created': proc.create_time(), 'exe': info['exe'], 'port': port, 'owner': owner, 'addresses': sorted({c.laddr.ip for c in listeners})})
         except (psutil.NoSuchProcess, psutil.AccessDenied, OSError):
             continue
     if len(endpoints) != 1:

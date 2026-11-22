@@ -79,6 +79,15 @@ class ServerWindow(QMainWindow):
         browser.clicked.connect(self.open_panel)
         operations.addWidget(browser)
         body.addLayout(operations)
+        self.task_permission_label = QLabel('')
+        self.task_permission_label.setWordWrap(True)
+        self.task_permission_label.hide()
+        body.addWidget(self.task_permission_label)
+        if sys.platform == 'win32':
+            repair_task = QPushButton('修复服务启停权限')
+            repair_task.clicked.connect(self.repair_task_permissions)
+            self.controls.append(repair_task)
+            body.addWidget(repair_task)
         body.addWidget(note('服务端只传递数据；模型账号和原 App 留在客户端电脑。停止或重启会暂时断开网页与终端，不会停止模型任务。'))
         self.table = QTableWidget(0, 4)
         self.table.setHorizontalHeaderLabels(['电脑', '应用', '客户端连接', '原 App 连接'])
@@ -327,6 +336,11 @@ class ServerWindow(QMainWindow):
             return '管理界面的登录启动已' + ('开启。' if enabled else '关闭。')
         self.submit('startup', configure)
 
+    def repair_task_permissions(self):
+        if QMessageBox.question(self, '修复服务启停权限', '仅为当前用户补齐本程序启动任务的读取、运行和更新权限，保留其他用户及系统权限。不会停止服务；Windows 可能请求管理员授权。继续？') != QMessageBox.StandardButton.Yes:
+            return
+        self.submit('task-permissions', self.manager.repair_task_permissions)
+
     def migrate_server(self):
         if QMessageBox.question(self, '接管旧服务', '只替换已核验的旧服务启动入口，保留账号、配对、历史和端口。网页会短暂断开，失败自动恢复。继续？') != QMessageBox.StandardButton.Yes:
             return
@@ -415,6 +429,9 @@ class ServerWindow(QMainWindow):
 
     def apply_status(self, value):
         self.current = value
+        permissions = value.get('taskPermissions', {})
+        self.task_permission_label.setVisible(bool(permissions.get('needsRepair')))
+        self.task_permission_label.setText('启动任务权限异常：当前用户可能无法启停服务。请点击“修复服务启停权限”。' if permissions.get('needsRepair') else '')
         if not value['configured']:
             self.status_label.setText('尚未配置服务器，请进入“连接与首次设置”。')
         else:

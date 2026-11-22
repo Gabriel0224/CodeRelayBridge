@@ -179,7 +179,13 @@ def windows_task_error(error, stage):
         if isinstance(value, int) and (not isinstance(value, bool)):
             codes.append(f'0x{value & 4294967295:08X}')
     detail = ' / '.join(dict.fromkeys(codes)) or type(error).__name__
-    return ClientError('Windows 计划任务失败：' + stage + '（' + detail + '）。请检查 Task Scheduler 服务及其事件日志；不要反复点击启动。')
+    denied = '0x80070005' in codes or '0x00000005' in codes
+    message = '）。当前用户缺少计划任务控制权限，请检查此任务的当前用户授权。' if denied else '）。请检查 Task Scheduler 服务及其事件日志；不要反复点击启动。'
+    result = ClientError('Windows 计划任务失败：' + stage + '（' + detail + message)
+    result.task_access_denied = denied
+    result.task_stage = stage
+    result.task_codes = list(dict.fromkeys(codes))
+    return result
 
 class WindowsTasks:
     """Task Scheduler COM: no periodic cmd/PowerShell windows and one process owner."""
@@ -221,7 +227,10 @@ class WindowsTasks:
             sid = win32security.ConvertSidToStringSid(win32security.GetTokenInformation(token, win32security.TokenUser)[0])
         finally:
             token.Close()
-        self.replace_xml(spec, fresh_task_xml(spec, sid), flags=2)
+        if spec.key == 'server':
+            self.replace_xml(spec, fresh_task_xml(spec, sid), flags=2, security_descriptor='D:(A;;FA;;;SY)(A;;FA;;;BA)(A;;FRFWFX;;;' + sid + ')')
+        else:
+            self.replace_xml(spec, fresh_task_xml(spec, sid), flags=2)
 
     def delete_test_task(self, spec):
         if ' - SetupTest ' not in spec.task_name or not spec.managed_executable.parent.parent.name.startswith('CodexRelayClient-SetupTest-'):
@@ -312,7 +321,7 @@ class WindowsTasks:
     def xml(self, spec):
         return self.invoke(spec, lambda task: str(task.Xml))
 
-    def replace_xml(self, spec, xml, flags=6):
+    def replace_xml(self, spec, xml, flags=6, security_descriptor=None):
         import pythoncom
         import win32com.client
         pythoncom.CoInitialize()
@@ -325,7 +334,8 @@ class WindowsTasks:
             stage = 'GetFolder'
             folder = service.GetFolder('\\')
             stage = 'RegisterTask'
-            registered = folder.RegisterTask(spec.task_name, xml, flags, None, None, 3)
+            args = (spec.task_name, xml, flags, None, None, 3)
+            registered = folder.RegisterTask(*args, security_descriptor) if security_descriptor else folder.RegisterTask(*args)
         except Exception as exc:
             error = windows_task_error(exc, stage)
             exc.__traceback__ = None
@@ -354,7 +364,10 @@ class WindowsTasks:
     def start(self, spec):
 
         def action(task):
-            task.Enabled = True
+            if bool(task.Enabled) and getattr(task, 'State', None) == 4:
+                return
+            if not task.Enabled:
+                task.Enabled = True
             task.Run(None)
         self.invoke(spec, action)
 
