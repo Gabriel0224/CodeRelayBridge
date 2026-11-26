@@ -154,11 +154,14 @@ class LinuxDesktopQueue:
                 previous = self.watched.get(tid)
                 self.watched[tid] = (deadline, previous[1] if previous else None)
 
+    def open_thread(self, tid):
+        self.agent.open_desktop_thread(tid)
+
     def execute(self, command):
         tid, action = (command['thread'], command['action'])
         if action == 'attach_thread':
             if not self.owns(tid):
-                self.agent.open_desktop_thread(tid)
+                self.open_thread(tid)
                 deadline = time.monotonic() + 12
                 while not self.owns(tid):
                     if time.monotonic() >= deadline:
@@ -194,7 +197,7 @@ class LinuxDesktopQueue:
         if queued.get('clientUserMessageId') != cid:
             raise RuntimeError('未收到匹配的原生队列回执，请核对原对话')
         try:
-            self.agent.open_desktop_thread(tid)
+            self.open_thread(tid)
             self.observe(tid, force=True)
             end = time.monotonic() + 15
             while time.monotonic() < end:

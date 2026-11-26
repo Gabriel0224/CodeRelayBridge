@@ -18,6 +18,8 @@ if edition == 'standard':
 if role == 'server':
     excludes += []
 if role == 'client':
+    if sys.platform == 'win32':
+        datas += [(str(work / 'OpenCodexSideChat.exe'), 'desktop_client')]
     import json
     manifest = json.loads((stage / 'manifest.json').read_text())
     hidden += ['relay_bridge_bundle.' + name for name in manifest['modules']]

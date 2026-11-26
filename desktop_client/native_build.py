@@ -20,6 +20,9 @@ def build(role, core_source=None, harness_source=None, bridge_source=None, editi
     if edition == 'standard':
         dist = dist / 'standard'
     work.mkdir(parents=True, exist_ok=True)
+    if sys.platform == 'win32' and role == 'client':
+        framework = Path(os.environ['WINDIR']) / 'Microsoft.NET/Framework64/v4.0.30319'
+        subprocess.run([str(framework / 'csc.exe'), '/nologo', '/codepage:65001', '/target:exe', '/out:' + str(work / 'OpenCodexSideChat.exe'), '/r:System.Windows.Forms.dll', *['/r:' + str(framework / 'WPF' / dll) for dll in ('WindowsBase.dll', 'UIAutomationTypes.dll', 'UIAutomationClient.dll')], str(repo / 'desktop_client/windows_side_chat.cs')], check=True)
     if sys.platform == 'darwin':
         from desktop_client.native_icons import mac_icon
         mac_icon(work, role)

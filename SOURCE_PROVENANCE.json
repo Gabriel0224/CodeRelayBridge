@@ -63,8 +63,8 @@
       "exportSha256": "012ffcf6c3299a95546ca5fba618cef59bf25a8d3ea4020d1a5c20b4f22f76a2"
     },
     "crb/codex/agent.py": {
-      "canonicalSha256": "3d94701adcd7c809f943b292609565a4cef75d577522df17c92e8bbf3c568e2e",
-      "exportSha256": "464f26cb2176a7ca577ce3fe868b04f1e5b0ba9096173ece05bd3ee690aefbf2"
+      "canonicalSha256": "1783fb2ef8fb69bf3e038566c0365adc37942bbc23e55a97d77f34ced7faa8e5",
+      "exportSha256": "41f2d8b9d014ed0a639f90ec3587a9a96f48062a4ba74f692ab924076dfa89bc"
     },
     "crb/codex/conversation.py": {
       "canonicalSha256": "684b4458d06bae542dca7dd12f1d9a57c967c11ed95398132be5400fdced6e35",
@@ -83,8 +83,8 @@
       "exportSha256": "77be3b3c283165f05bda5ca8ff08637e2aaab7e195541a1a35241a5e3ee432d5"
     },
     "crb/codex/linux_desktop_queue.py": {
-      "canonicalSha256": "43738bf01a10f98d49f4f90a78d4860c49f161dc2b2a398fff269c1be17477b3",
-      "exportSha256": "8d584ae955e8cdc6c1ddab11140cf5f33281af145d0c0f3d3b31dda833cbc850"
+      "canonicalSha256": "35f8d66e737bbdedcdb6e3e1a2dda382c87c3b8fef563c48f0ef50690f006694",
+      "exportSha256": "1aa2882c83ebf00e15a1990d1264f1d4e3f5e80f42d5948444d87eead719ea24"
     },
     "crb/codex/linux_foreground_forms.py": {
       "canonicalSha256": "22991faa23279cb56cee74814ce172e5c7991ce6ac587004b9be2058df72b921",
@@ -110,6 +110,10 @@
       "canonicalSha256": "467e0d95832a7205b89a78752273064a7b930a3abc15742a3750577bbd37afe3",
       "exportSha256": "750edd1931dd9acf498c345623ceb9edfd534ce67b0f9007f4d63053dfd8324a"
     },
+    "crb/codex/mac_side_chat.py": {
+      "canonicalSha256": "f32c0dad6c4ab64dd7bf5cede05b330944cdc5157370d18d2f4695ac8bc19226",
+      "exportSha256": "84a949a22bee271f3eeb7ab8e3a61f6cb824a5697c63eb0b9c5699d6fb6f0d38"
+    },
     "crb/codex/native_features.py": {
       "canonicalSha256": "5e3b50c7719f068263c8afb6856e95bf643b2b459fcb96704b8c78826a82de28",
       "exportSha256": "236977a5931b4132ac0c989ea4014276644e5540187f2e82fecf33e1687938d4"
@@ -117,6 +121,10 @@
     "crb/codex/native_history.py": {
       "canonicalSha256": "b73a7d3f51e6e3d3213c07f6d1ea6c990a7944e6c4d70111196ace9a20a4f5a1",
       "exportSha256": "7133c7d609d1a3b2697fef0640c787e394b037bb2ca20460ded4c3df3c6a4949"
+    },
+    "crb/codex/native_queue_owner.py": {
+      "canonicalSha256": "130a40d7c2c9642930384d9fdf778164b675df4cbaf30df365fe43766050305a",
+      "exportSha256": "6577bcb6a1e97969c627c5b732ae625b622df096b2c1a6a0a3e099305f2382f3"
     },
     "crb/codex/native_sidebar.py": {
       "canonicalSha256": "2fe8abc867f4189d569004d36b7747e6ff4e703d90de9fbbe1b257c18177e08d",
@@ -153,6 +161,10 @@
     "crb/codex/sidebar_ui.py": {
       "canonicalSha256": "c5e1e8075705b1a53060ac39f1f94c7519657be939f870f7bc0a19cf03b1e9c7",
       "exportSha256": "d23cc8601c88d97b5f8ad8625d28ce5de21d1e8e2a60afde5a951d733ca01069"
+    },
+    "crb/codex/stock_desktop_queue.py": {
+      "canonicalSha256": "ee13b020e69b415674597f63da5248a9b5c038f63ab0b06b87ec0c86b4bb0fcd",
+      "exportSha256": "255c342e464be22514a738732b65bc44c735ef82ddc6393417dceb92cd7582f6"
     },
     "crb/codex/stop_modern_desktop.py": {
       "canonicalSha256": "143530aab25f18ff4088d0309256888f579b3af53d8df93b4130bdb64694030c",
@@ -331,8 +343,8 @@
       "exportSha256": "b3e2d8c42763030deccb2df00f18ca252bec9792098fefcaa4c34300af299a33"
     },
     "desktop_client/__init__.py": {
-      "canonicalSha256": "9056668de74d1f8cf7ab5333d3dccdf954ff47a9ef63b4bfbf044a092f7710d1",
-      "exportSha256": "e9da70ae97cf8644f94f986081e6f9b58fd517dc7aba8f93e016792696d27323"
+      "canonicalSha256": "bfa3bdbd92b89ed2b6b4b261f8f0c77228fbca4ccb82b437db561a6059cd9ec1",
+      "exportSha256": "bf716e3efe343b2d9444c9e684edba7b6926887c43d5268bacf61ea5ba6eb4ba"
     },
     "desktop_client/acceptance.py": {
       "canonicalSha256": "89dee34346aa1d650e9aeeb009c77c972108009e2e3a4678c3e5cf00e1fe320c",
@@ -415,16 +427,16 @@
       "exportSha256": "f02ea344a08b7e03bdfad9b0ceac5c77f262948012c6962a101eaa0f45aecec9"
     },
     "desktop_client/native-relay.spec": {
-      "canonicalSha256": "bcd252ecd1268f19421c578606fb33b8bb7c9b246531456512d8bb4c4d4fa8b8",
-      "exportSha256": "14acd44f25c0bbaef82e2ab8c32a0a9c6f553c7dda693b6ba2368ef71d1c6f0d"
+      "canonicalSha256": "0c5e6c438767ea712b97a7c4abdc6fa7a4b7df2cd7c32a1d9a14282e0541419b",
+      "exportSha256": "297307d604e7dadb69f2d166657e0f77cf97fc1456ab2382ee23a9c78ecdb9d7"
     },
     "desktop_client/native_apps.py": {
       "canonicalSha256": "56811f06191aaac130606fd711bf99a3dae9d6d678663df2a6cb8a19f0c52e4a",
       "exportSha256": "6f81d187ffb0c20d2561246f67b8d0434e6e9446f5580f5b5e9b91fc23b5a860"
     },
     "desktop_client/native_build.py": {
-      "canonicalSha256": "4da987f726f254eef414edf29eec5b76ffaffb52ce943b2cc49c14dd2fb94173",
-      "exportSha256": "a8a634e82634aa2637956e3a770e34cd66c29d802f7c043ab5c3d808203de808"
+      "canonicalSha256": "c68048e4d53741c9311ccd5280cb3b93276cc60a51058858f08071355b2f3f63",
+      "exportSha256": "696bf278a6d876dac80bfc69446aa137dff8dbba188fa02822a2a307df90a16e"
     },
     "desktop_client/native_checks.py": {
       "canonicalSha256": "c8ba2624a46af7c3677783f27624cec9d97d805998882fe03df3cdb32162783a",
@@ -521,6 +533,10 @@
     "desktop_client/vendor/modern_desktop_client.py": {
       "canonicalSha256": "f1cc9b3d934aeb328c02337a19308e8f9d6884f20d908ef5f7e3ed73575f254e",
       "exportSha256": "a7a2e9cd161c22103360a36762064273c763638691ddd5d7d6ac9457ed017c27"
+    },
+    "desktop_client/windows_side_chat.cs": {
+      "canonicalSha256": "56d19156405694eb418a419dbcd2b77f23c4d0ff2e7158271fefbf6029f4d055",
+      "exportSha256": "56d19156405694eb418a419dbcd2b77f23c4d0ff2e7158271fefbf6029f4d055"
     },
     "desktop_server/__init__.py": {
       "canonicalSha256": "c4dc3939f7e334fd916ffd09373648b826072aeef6fabfe4abb00223db0ad2e9",

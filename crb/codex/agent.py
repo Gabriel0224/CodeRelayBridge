@@ -4325,10 +4325,16 @@ class HostAgent:
                                 try:
                                     self.ipc.connect()
                                 except Exception as exc:
-                                    if not sys.platform.startswith('linux') or not self.appserver:
+                                    if not self.appserver:
                                         raise ConnectionError('原 App 本机接口尚未就绪或版本未适配') from exc
-                                    from crb.codex.linux_shared_desktop import connect_desktop
-                                    self.ipc = connect_desktop(self)
+                                    if sys.platform in ('darwin', 'win32'):
+                                        from crb.codex.stock_desktop_queue import StockDesktopQueue
+                                        self.ipc = StockDesktopQueue(self)
+                                    elif sys.platform.startswith('linux'):
+                                        from crb.codex.linux_shared_desktop import connect_desktop
+                                        self.ipc = connect_desktop(self)
+                                    else:
+                                        raise ConnectionError('此平台尚未适配原 App') from exc
                             if sys.platform.startswith('linux') and (not getattr(self.ipc, 'queue_desktop', False)) and (not getattr(self, 'native_output_probe_busy', False)):
                                 self.native_output_probe_busy = True
                                 threading.Thread(target=self.probe_native_output_capability, name='codex-native-output-capability', daemon=True).start()
