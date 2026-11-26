@@ -14,7 +14,8 @@ def connect_desktop(agent):
     backend = native_backend(agent.home)
     endpoint = endpoint_for(backend)
     if endpoint is None:
-        return LinuxDesktopQueue(agent, backend)
+        from crb.codex.linux_stock_desktop import LinuxStockDesktopQueue
+        return LinuxStockDesktopQueue(agent, backend)
     desktop = LinuxSharedDesktop(agent, backend)
     desktop.owner = OwnerRPC(desktop.backend, endpoint)
     desktop.owner.request('thread/loaded/list', {'limit': 1})

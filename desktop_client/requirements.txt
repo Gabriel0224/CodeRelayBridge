@@ -9,3 +9,4 @@ pywinpty>=3.0; sys_platform == "win32"
 cryptography==50.0.2
 keyring==25.7.0
 jeepney==0.9.0; sys_platform == "linux"
+python-xlib==0.33; sys_platform == "linux"

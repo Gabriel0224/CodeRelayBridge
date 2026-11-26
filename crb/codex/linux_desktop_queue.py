@@ -29,7 +29,7 @@ def native_backend(home):
         raise ConnectionError('本机没有可验证的桌面对话写入记录')
     version = configparser.ConfigParser()
     version.read(APP.parent / 'resources/owl-app.ini')
-    if version.get('Owl', 'AppVersion', fallback='') != '26.1120.41243':
+    if version.get('Owl', 'AppVersion', fallback='') not in ('26.1120.41243', '26.1120.50957'):
         raise ConnectionError('此桌面版本尚未验证原生队列协议')
     matches = []
     for p in psutil.process_iter(['name']):

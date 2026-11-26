@@ -7,6 +7,8 @@ CRB's project license does not replace these upstream licenses. Keep their actua
 | Python | https://docs.python.org/3/license.html | Bundled native interpreter |
 | PySide6 / Shiboken / Qt | https://doc.qt.io/qtforpython-6/licenses.html | Native UI; upstream LGPL/GPL/commercial choices apply |
 | PyInstaller | https://pyinstaller.org/en/stable/license.html | Native packaging; bootloader exception |
+| python-xlib | https://github.com/python-xlib/python-xlib | Linux X11 window identity and native side chat shortcuts |
+| six | https://github.com/benjaminp/six | python-xlib compatibility dependency |
 | psutil | https://github.com/giampaolo/psutil | Process ownership and lifecycle checks |
 | PyYAML | https://github.com/yaml/pyyaml | Supported desktop configuration parsing |
 | websocket-client | https://github.com/websocket-client/websocket-client | Desktop connection transport |

@@ -18,6 +18,9 @@ if edition == 'standard':
 if role == 'server':
     excludes += []
 if role == 'client':
+    if sys.platform.startswith('linux'):
+        from PyInstaller.utils.hooks import collect_submodules
+        hidden += collect_submodules('Xlib')
     if sys.platform == 'win32':
         datas += [(str(work / 'OpenCodexSideChat.exe'), 'desktop_client')]
     import json
