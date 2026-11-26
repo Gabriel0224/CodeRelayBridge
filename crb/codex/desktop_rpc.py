@@ -28,6 +28,7 @@ def legacy_endpoint_absent(error, platform):
 
 class NativeDesktopRPC:
     native_rpc = True
+    supports_side_workbench = True
 
     def __init__(self, home, on_event):
         self.home = str(home)
@@ -182,6 +183,9 @@ class NativeDesktopRPC:
             state = value.get('state')
             if not isinstance(state, dict) or state.get('id') != tid or state.get('hostId') != 'local' or (type(value.get('attached')) is not bool) or (type(value.get('revision')) is not int):
                 raise ValueError('Invalid native conversation snapshot')
+            if not value['attached']:
+                self.on_event({'type': 'native-rpc-unloaded', 'conversationId': tid})
+                return
             self.on_event({'type': 'native-rpc-snapshot', 'conversationId': tid, 'state': state, 'revision': value['revision'], 'owner': self.key if value['attached'] else None})
         elif value.get('type') == 'queue':
             messages = value.get('messages')
@@ -229,6 +233,10 @@ class NativeDesktopRPC:
         operation, arguments = operations[method]
         result = self._call(operation, tid, arguments, timeout)
         return {'method': method, 'resultType': 'success', 'handledByClientId': self.key, 'result': result}
+
+    def create_side_chat(self, tid):
+        uuid.UUID(tid)
+        return self._call('side-create', tid, timeout=30)
 
     def update_queue(self, tid, before, after, discarded_ids):
         return {'result': self._call('queue', tid, {'before': before, 'after': after, 'discardedIds': discarded_ids}, timeout=30)}

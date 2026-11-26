@@ -116,8 +116,9 @@ def public_schedule(rule):
 
 class NativeFeatures:
 
-    def __init__(self, agent):
+    def __init__(self, agent, command_id=None):
         self.agent = agent
+        self.command_id = command_id
 
     def cache(self):
         with self.agent.lock:
@@ -144,12 +145,18 @@ class NativeFeatures:
         return digest([str(self.agent.home), str(getattr(self.agent, 'native_identity_key', '')), id(ipc), id(getattr(ipc, 'sock', None)), id(self.agent.appserver), file_signature(self.agent.home / 'auth.json')])[:24]
 
     def rpc(self, method, params):
+        shared = getattr(self.agent, 'ipc', None)
+        if getattr(shared, 'queue_desktop', False) is True and getattr(shared, 'owner', None):
+            return shared.owner.request(method, params, timeout=30)
         if not self.agent.appserver:
             raise RuntimeError('目标机原生接口不可用')
         return self.agent.appserver.request(method, params, timeout=30)
 
     def tool(self, name, params, tid):
-        if sys.platform == 'darwin':
+        shared_tool = getattr(getattr(self.agent, 'ipc', None), 'desktop_tool', None)
+        if getattr(getattr(self.agent, 'ipc', None), 'queue_desktop', False) is True and callable(shared_tool):
+            result = shared_tool(name, params, tid)
+        elif sys.platform == 'darwin':
             result = self.agent.call_macos_app_tool(name, params, tid)
         else:
             result = self.agent.app_tools.call(name, params, tid)
@@ -297,6 +304,9 @@ class NativeFeatures:
                     process.kill()
                 process.wait(timeout=3)
                 if process.returncode and (not truncated):
+                    probe = subprocess.run(['git', '-C', cwd, 'rev-parse', '--is-inside-work-tree'], capture_output=True, timeout=4, env={**os.environ, 'LC_ALL': 'C'}, creationflags=kwargs.get('creationflags', 0))
+                    if probe.returncode == 128 and b'not a git repository' in probe.stderr or (probe.returncode == 0 and probe.stdout.strip() == b'false'):
+                        return {'ok': True, 'diff': '', 'truncated': False, 'cwd': cwd, 'view': view, 'gitWorktree': False, 'notice': '这个对话的目录不在 Git 工作区内。'}
                     err.seek(0)
                     raise RuntimeError('Git 审阅失败：' + err.read(2000).decode('utf-8', errors='replace'))
                 return {'ok': True, 'diff': raw[:512 * 1024].decode('utf-8', errors='replace'), 'truncated': truncated, 'cwd': cwd, 'view': view}
@@ -327,6 +337,43 @@ class NativeFeatures:
 
     def _execute(self, action, tid, payload):
         operation = payload.get('operation')
+        if operation == 'side_workbench':
+            from crb.codex.workbench import Workbench
+            _, cwd = self.context(tid)
+            with self.agent.lock:
+                rows = [row for row in self.agent.catalog if not row.get('attachedToThreadId')]
+            parent = next((row for row in rows if row['id'] == tid), None)
+            if parent is None:
+                raise ValueError('请从主对话打开侧边')
+            project = parent.get('projectId')
+            members = {row['id']: row.get('title') or '未命名对话' for row in rows if row['id'] == tid or (project and row.get('projectId') == project)}
+
+            def send(target, message):
+                if not self.command_id:
+                    raise ValueError('缺少发送请求标识')
+                shared = getattr(self.agent.ipc, 'send_side', None)
+                if target != tid and callable(shared):
+                    return shared(tid, target, message, self.command_id)
+                return self.agent.execute({'id': self.command_id, 'action': 'send', 'thread': target, 'text': json.dumps({'relayMessageVersion': 1, 'text': message, 'attachments': []}, ensure_ascii=False)})
+
+            def files(_):
+                raise ValueError('请通过目标机文件通道搜索')
+
+            def rpc(method, params):
+                if method == 'thread/fork':
+                    ipc = getattr(self.agent, 'ipc', None)
+                    create = getattr(ipc, 'create_side_chat', None)
+                    if not callable(create):
+                        raise RuntimeError('当前原 App 尚未连接侧聊创建接口，请先恢复应用连接')
+                    return create(tid)
+                ipc = self.agent.ipc
+                if getattr(ipc, 'queue_desktop', False) is True and getattr(ipc, 'owner', None):
+                    if method == 'thread/turns/list' and callable(getattr(ipc, 'side_history', None)):
+                        return ipc.side_history(params)
+                    return ipc.owner.request(method, params)
+                return self.rpc(method, params)
+            value = Workbench(rpc, send, files, self.review).execute(tid, members, cwd, payload, write=action == 'native_action')
+            return dict(value, ok=True)
         if action == 'native_read' and operation == 'fork_status':
             return fork_status(self.agent, tid, payload)
         if operation == 'sidebar' or str(operation).startswith('sidebar_'):

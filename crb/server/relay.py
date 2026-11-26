@@ -456,6 +456,7 @@ class Relay:
         self.secure_commands = {}
         self.lite_views = {}
         self.live_output_demands = {}
+        self.foreground_threads = {}
         self.failures = {}
         self.setup_failures = {}
         self.ssh_terminals = SshTerminalManager(cfg)
@@ -497,6 +498,27 @@ class Relay:
     def lite_item_key(item):
         return f"{item.get('turnId', '')}/{item.get('id', '')}"
 
+    def foreground_demand(self, host, tid=None):
+        """Renew only from a visible, authenticated chat. Multiple tabs share a lease."""
+        now = time.monotonic()
+        with self.lock:
+            active = self.foreground_threads
+            for key, deadline in list(active.items()):
+                if deadline <= now:
+                    del active[key]
+            state = self.hosts.get(host, {})
+            if not state.get('desktopConnected') or not state.get('capabilities', {}).get('foregroundThreadWatch') or time.time() - state.get('seen', 0) >= HOST_ONLINE_TTL:
+                return []
+            if tid and tid in state.get('views', {}):
+                key = (host, tid)
+                active.pop(key, None)
+                active[key] = now + 45
+            for key in [key for key in active if key[0] == host][:-4]:
+                del active[key]
+            while len(active) > 128:
+                del active[next(iter(active))]
+            return [key[1] for key in active if key[0] == host]
+
     def live_output_demand(self, host, tid=None, wanted=None):
         """Ephemeral foreground interest, independent of command/history storage."""
         now = time.monotonic()
@@ -532,6 +554,8 @@ class Relay:
             records[tid] = {'revision': 1, 'view': clean, 'patches': []}
             return
         old = previous['view']
+        if clean.get('source') == 'desktop-live' and clean.get('owned') is False and (clean.get('status') == 'notLoaded') and (not clean.get('items')) and old.get('items'):
+            clean = {**clean, 'items': old['items'], 'totalItems': old.get('totalItems', len(old['items'])), 'partialHistory': True, 'historyUnavailable': True}
         if old == clean:
             return
         old_items = {self.lite_item_key(item): item for item in old.get('items', []) if isinstance(item, dict)}
@@ -881,6 +905,8 @@ class Relay:
                 if ephemeral:
                     with self.db() as db:
                         receipt = {key: value for key, value in result.items() if key != 'data'}
+                        if action == 'client_files' and request.get('action') == 'search_content':
+                            receipt = {'ok': result.get('ok') is True}
                         db.execute("UPDATE commands SET text='', result=? WHERE id=? AND host=?", (json.dumps(receipt), cid, target))
                 if not result.get('ok'):
                     raise ValueError(result.get('error') or '客户端未完成操作')
@@ -963,7 +989,7 @@ def handler_factory(app):
             office_script, office_frame = app.office.csp()
             script_source = "'self'" + (' ' + office_script if office_script else '')
             frame_source = "'self' blob:" + (' data: ' + office_frame if office_frame else '')
-            self.send_header('Content-Security-Policy', "default-src 'self'; script-src " + script_source + "; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data: blob: https:; font-src 'self' data:; frame-src " + frame_source + "; object-src 'none'; frame-ancestors 'none'; base-uri 'none'")
+            self.send_header('Content-Security-Policy', "default-src 'self'; script-src " + script_source + "; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data: blob: https:; font-src 'self' data:; frame-src " + frame_source + "; object-src 'none'; frame-ancestors " + ("'self'" if self.path.split('?', 1)[0] == '/lite/vendor/workbench/index.html' else "'none'") + "; base-uri 'none'")
             for key, value in (extra or {}).items():
                 self.send_header(key, value)
             self.end_headers()
@@ -1188,6 +1214,8 @@ def handler_factory(app):
                         demand = params.get('liveOutput', [''])[0]
                         if self.command == 'GET' and demand in ('0', '1'):
                             app.live_output_demand(host, tid, demand == '1')
+                        if self.command == 'GET' and params.get('follow') == ['1']:
+                            app.foreground_demand(host, tid)
                     return self.response(200, result, compress=True)
                 if path == '/api/command':
                     cid = params.get('id', [''])[0]
@@ -1323,7 +1351,7 @@ def handler_factory(app):
                     return self.response(200, result)
                 if self.path == '/api/files':
                     request = self.body()
-                    return self.response(200, app.client_access(request.get('host', ''), 'client_files', request) if app.client_access_host(request.get('host', '')) else app.ssh_files.execute(request))
+                    return self.response(200, app.client_access(request.get('host', ''), 'client_files', request, ephemeral=request.get('action') == 'search_content') if app.client_access_host(request.get('host', '')) else app.ssh_files.execute(request))
                 if self.path == '/api/local-preview/open':
                     request = self.body()
                     return self.response(200, app.local_preview.open(request.get('host', ''), request.get('url', '')))
@@ -1477,6 +1505,8 @@ def handler_factory(app):
                 response['catalogSync'] = {'protocol': 1, 'hash': catalog_base['hash']}
             if state.get('capabilities', {}).get('nativeLiveOutput') is True:
                 response['liveOutputDemand'] = app.live_output_demand(host)
+            if state.get('capabilities', {}).get('foregroundThreadWatch') is True:
+                response['foregroundThreads'] = app.foreground_demand(host)
             return self.response(200, response)
 
         def client_control_sync(self, host, data, enrolled, supplied):

@@ -38,14 +38,35 @@ def _project_id_map(home, state):
 def project_id_map(home):
     return _project_id_map(home, _desktop_state(home))
 
-def thread_project_memberships(home, project_ids):
+def catalog_project_state(home, projects, identity_key):
+    """Respect Desktop's undo window while app-server still lists a removed project."""
+    state = _desktop_state(home)
+    registered = state.get('local-projects')
+    removed = set()
+    prefix = 'electron-owner-value:app-server-pending-project-deletions-by-host:'
+    scopes = state.get(prefix + identity_key, {}) if identity_key else {}
+    entries = scopes.get('local:' + str(home)) if isinstance(scopes, dict) else None
+    if isinstance(registered, dict) and isinstance(entries, dict) and entries:
+        mapping = _project_id_map(home, state)
+        visible = {mapping.get(key, key) for key in registered}
+        for key, record in entries.items():
+            if not isinstance(record, dict):
+                continue
+            pid = record.get('projectId')
+            if isinstance(pid, str) and pid and (mapping.get(key) == pid) and (pid not in visible) and (type(record.get('deleteAfterMs')) is int) and (record['deleteAfterMs'] > 0):
+                removed.add(pid)
+    ids = {p['id'] for p in projects} - removed
+    return (removed, thread_project_memberships(home, ids, state=state))
+
+def thread_project_memberships(home, project_ids, *, state=None):
     """Explicit Desktop memberships, including removal from a project.
 
     Missing keys allow the older database/folder fallback. Present None values
     must not fall back: deleted, cloud and explicitly projectless memberships
     cannot borrow a different project's shared directory.
     """
-    state = _desktop_state(home)
+    if state is None:
+        state = _desktop_state(home)
     mapping = _project_id_map(home, state)
     assignments = state.get('thread-project-assignments', {})
     hosts = state.get('thread-project-membership-host-ids', {})

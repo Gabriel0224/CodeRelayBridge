@@ -44,7 +44,7 @@ from crb.codex.queue_protocol import NativeQueueProtocol
 from crb.codex.native_history import NativeHistoryReader
 from crb.codex.conversation import create_configured
 import crb.codex.sidebar_ui as native_conversation_ui
-from crb.codex.projects import desktop_project_id, local_projects, path_key, project_paths, project_id_map, registered_backend_project, thread_project_memberships
+from crb.codex.projects import desktop_project_id, local_projects, path_key, project_paths, project_id_map, registered_backend_project, catalog_project_state
 from crb.common.live_view_cache import LiveTurnCache
 MAX_ITEM_TEXT = 500000
 MAX_TOOL_DETAIL = 200000
@@ -1008,6 +1008,27 @@ def pending_async_questions(state):
                 if item.get('type') in ('UserMessage', 'userMessage') and content and (not replies):
                     ordinary_turn = turn_index
     return [(item, [question for question in questions if question['questionItemId'] not in answered]) for turn_index, item, questions in offered if turn_index >= ordinary_turn and any((question['questionItemId'] not in answered for question in questions))]
+
+def prepare_async_answer(state, payload):
+    item_id = str(payload.get('itemId', ''))
+    offered, questions = next(((item, questions) for item, questions in pending_async_questions(state) if str(item.get('id', '')) == item_id), (None, []))
+    if not item_id or not offered:
+        raise RuntimeError('这组选项已过期，请刷新对话')
+    requested_ids = payload.get('questionIds')
+    if requested_ids is not None and requested_ids != [question['questionItemId'] for question in questions]:
+        raise RuntimeError('部分问题已在原 App 回答，请等待同步后回答剩余问题')
+    answers = payload.get('answers')
+    skipped = payload.get('skippedQuestionIds', [])
+    ids = [question['questionItemId'] for question in questions]
+    if not isinstance(skipped, list) or len(skipped) > 8 or any((not isinstance(value, str) or value not in ids for value in skipped)) or (len(set(skipped)) != len(skipped)) or (not isinstance(answers, list)) or (len(answers) != len(questions)) or any((not isinstance(answer, str) or len(answer) > 4000 or (not answer.strip() and question_id not in skipped) or (answer.strip() and question_id in skipped) for question_id, answer in zip(ids, answers))) or (not any((answer.strip() for answer in answers))):
+        raise ValueError('请选择或填写每个问题的回答')
+    values = [answer.strip() for answer in answers]
+    replies = [{'questionItemId': question['questionItemId'], 'question': question['title'], 'answer': value} for question, value in zip(questions, values) if value]
+    question_turn = next((turn for turn in reversed(state_turns(state)) if any((isinstance(item, dict) and item.get('id') == item_id for item in turn.get('items', [])))), None)
+    text = '<send_user_message_question_reply>\n' + json.dumps(replies, ensure_ascii=False, separators=(',', ':')) + '\n</send_user_message_question_reply>'
+    if len(text) > 32000:
+        raise ValueError('选项回答过长')
+    return (text, replies, question_turn)
 
 def latest_async_question(state):
     pending = pending_async_questions(state)
@@ -2334,12 +2355,16 @@ class HostAgent:
         with closing(sqlite3.connect(database_uri, uri=True, timeout=2)) as db:
             db.row_factory = sqlite3.Row
             columns = {row[1] for row in db.execute('PRAGMA table_info(threads)')}
-            optional = {'source': 'native_source', 'is_pinned': 'native_pinned', 'agent_path': 'native_agent_path', 'agent_nickname': 'native_agent_nickname', 'agent_role': 'native_agent_role', 'thread_section_id': 'native_section'}
+            optional = {'source': 'native_source', 'is_pinned': 'native_pinned', 'agent_path': 'native_agent_path', 'agent_nickname': 'native_agent_nickname', 'agent_role': 'native_agent_role', 'thread_section_id': 'native_section', 'attached_thread_parent_id': 'attached_parent'}
             extra = ','.join(((key if key in columns else 'NULL') + ' AS ' + alias for key, alias in optional.items()))
             query = 'SELECT id,name,title,first_user_message,cwd,model,reasoning_effort,updated_at,rollout_path,archived,project_id,' + extra + ' FROM threads WHERE '
             predicate = native_subagent_predicate(columns)
-            rows = db.execute(query + 'NOT (' + predicate + ') ORDER BY archived ASC,updated_at DESC LIMIT 1000').fetchall()
-            rows += db.execute(query + predicate + ' ORDER BY archived ASC,updated_at DESC LIMIT 1000').fetchall()
+            ordinary = 'NOT (' + predicate + ')'
+            order = ' ORDER BY archived ASC,updated_at DESC LIMIT 1000'
+            groups = [ordinary, predicate]
+            if 'attached_thread_parent_id' in columns:
+                groups = [ordinary + " AND NULLIF(attached_thread_parent_id,'') IS NULL", predicate, ordinary + " AND NULLIF(attached_thread_parent_id,'') IS NOT NULL"]
+            rows = [row for group in groups for row in db.execute(query + group + order)]
             try:
                 sections = dict(db.execute('SELECT id,name FROM thread_sections'))
             except sqlite3.OperationalError:
@@ -2357,9 +2382,12 @@ class HostAgent:
         for row in root_rows:
             roots.setdefault(row['project_id'], []).append(row['path'])
         projects = [{'id': row['id'], 'name': title_text(row['name']), 'position': row['position'], 'roots': roots.get(row['id'], []), 'threadCount': 0} for row in project_rows]
+        all_projects = projects
+        removed, memberships = catalog_project_state(self.home, projects, getattr(self, 'native_identity_key', None))
+        if removed:
+            projects = [project for project in projects if project['id'] not in removed]
         projects_by_id = {project['id']: project for project in projects}
-        memberships = thread_project_memberships(self.home, projects_by_id)
-        root_matches = sorted(((os.path.normcase(os.path.abspath(normalize_local_path(root))), project['id']) for project in projects for root in project['roots'] if root), key=lambda item: len(item[0]), reverse=True)
+        root_matches = sorted(((os.path.normcase(os.path.abspath(normalize_local_path(root))), project['id']) for project in all_projects for root in project['roots'] if root), key=lambda item: len(item[0]), reverse=True)
         with self.lock:
             read_state_available = self.native_read_state_available
             unread_threads = set(self.unread_threads)
@@ -2372,12 +2400,15 @@ class HostAgent:
             project_id = row['project_id'] if row['project_id'] in projects_by_id else None
             if row['id'] in memberships:
                 project_id = memberships[row['id']]
-            elif project_id is None:
+            elif project_id is None and row['project_id'] not in removed:
                 matches = [(root, pid) for root, pid in root_matches if path_belongs_to(row['cwd'], root)]
                 longest = len(matches[0][0]) if matches else 0
                 candidates = {pid for root, pid in matches if len(root) == longest}
-                project_id = next(iter(candidates)) if len(candidates) == 1 else None
-            if project_id and (not sidebar['isSubagent']):
+                if len(candidates) == 1 and candidates.isdisjoint(removed):
+                    project_id = next(iter(candidates))
+            if row['attached_parent']:
+                sidebar['attachedToThreadId'] = row['attached_parent']
+            if project_id and (not sidebar['isSubagent']) and (not row['attached_parent']):
                 projects_by_id[project_id]['threadCount'] += 1
             catalog.append({'id': row['id'], 'title': title_text(row['name'], row['title'], row['first_user_message']), 'cwd': row['cwd'] or '', 'model': row['model'], 'reasoningEffort': row['reasoning_effort'], 'updated_at': row['updated_at'], 'archived': bool(row['archived']), 'projectId': project_id, 'projectName': projects_by_id.get(project_id, {}).get('name', '未分类'), 'status': live_statuses.get(row['id'], 'notLoaded'), 'unread': row['id'] in unread_threads if read_state_available else None, 'automations': scheduled.get(row['id'], []), 'stateSource': 'codex-desktop', **sidebar})
             notification = completion_notifications.get(row['id'])
@@ -2394,7 +2425,7 @@ class HostAgent:
                 view['unread'] = thread['unread']
                 if not view.get('owned'):
                     view['status'] = thread['status']
-            recent = [row['id'] for row in catalog if not row['archived'] and (not row['isSubagent'])][:12]
+            recent = [row['id'] for row in catalog if not row['archived'] and (not row['isSubagent']) and (not row.get('attachedToThreadId'))][:12]
             self.wanted.update(recent)
             self.last_catalog = time.monotonic()
 
@@ -2667,7 +2698,13 @@ class HostAgent:
             with self.lock:
                 source = self.paths.get(tid)
         reader = getattr(self, 'history_reader', None)
-        if reader and source and (not summary):
+        ipc = getattr(self, 'ipc', None)
+        owner = getattr(ipc, 'owner', None) if getattr(ipc, 'queue_desktop', False) is True else None
+        if owner is not None:
+            result = owner.request('thread/turns/list', params, timeout=60)
+            if not cursor and (not summary) and getattr(ipc, 'live', None):
+                result = ipc.live.merge(tid, result)
+        elif reader and source and (not summary):
             result = reader.read(self.appserver, tid, params, source, timeout=60)
         else:
             result = self.appserver.request('thread/turns/list', params, timeout=60)
@@ -3111,6 +3148,10 @@ class HostAgent:
         owned context afterwards. The Mac App-managed bridge reads this context
         through the original App; it never resumes or takes over another writer.
         """
+        shared_tool = getattr(getattr(self, 'ipc', None), 'desktop_tool', None)
+        if getattr(getattr(self, 'ipc', None), 'queue_desktop', False) is True and callable(shared_tool):
+            yield (shared_tool, context_tid, {'cleanupWarning': None})
+            return
         native_call = self.call_macos_app_tool if sys.platform == 'darwin' else self.app_tools.call
         info = {'cleanupWarning': None}
         if context_tid:
@@ -3211,11 +3252,18 @@ class HostAgent:
 
     def execute(self, command):
         tid, action = (command['thread'], command['action'])
+        desktop_queue = getattr(self, 'ipc', None)
+        if getattr(desktop_queue, 'queue_desktop', False) is True:
+            if action in ('watch', 'attach_thread', 'send', 'refresh_thread') or action in getattr(desktop_queue, 'direct_actions', ()):
+                return desktop_queue.execute(command)
+            if action not in desktop_queue.actions:
+                raise ValueError('此操作需要原 App 的完整联动接口')
         if action == 'watch':
             with self.lock:
                 self.wanted.add(tid)
                 self.followed.discard(tid)
-                loaded = tid in self.states
+                slot = self.states.get(tid)
+                loaded = bool(slot and (slot.get('owner') or state_turns(slot['state'])))
                 if loaded:
                     self.dirty.add(tid)
             if self.ipc and self.ipc.connected:
@@ -3223,7 +3271,8 @@ class HostAgent:
             if not loaded:
                 view = self.read_history(tid)
                 with self.lock:
-                    if tid not in self.states:
+                    slot = self.states.get(tid)
+                    if not slot or not (slot.get('owner') or state_turns(slot['state'])):
                         self.last_sent[tid] = view
             return {'ok': True}
         if action == 'mark_read':
@@ -3242,6 +3291,9 @@ class HostAgent:
             try:
                 try:
                     native_call = self.call_macos_app_tool if sys.platform == 'darwin' else self.app_tools.call
+                    shared_tool = getattr(desktop_queue, 'desktop_tool', None)
+                    if getattr(desktop_queue, 'queue_desktop', False) is True and callable(shared_tool):
+                        native_call = shared_tool
                     native_call('set_thread_read_state', {'threadId': tid, 'read': True, 'source': 'codex'}, tid)
                 except (RuntimeError, ConnectionError, OSError) as exc:
                     unsupported_tool = isinstance(exc, RuntimeError) and any((text in str(exc) for text in ('Unsupported dynamic tool: set_thread_read_state', 'Invalid app tool request')))
@@ -3295,7 +3347,11 @@ class HostAgent:
         if action == 'project_rename' and payload.get('mode') == 'roots':
             action = 'project_update_roots'
         if action in ('native_read', 'native_action'):
-            return NativeFeatures(self).execute(action, tid, payload)
+            if getattr(desktop_queue, 'queue_desktop', False) is True and payload.get('operation') == 'refresh_thread' and (action == 'native_read'):
+                return desktop_queue.execute({**command, 'action': 'refresh_thread'})
+            if getattr(desktop_queue, 'queue_desktop', False) is True and (not callable(getattr(desktop_queue, 'desktop_tool', None))) and (payload.get('operation') != 'side_workbench') and (not (action == 'native_read' and payload.get('operation') in ('permissions', 'metadata', 'review'))):
+                raise ValueError('当前连接尚未接入此项桌面操作')
+            return NativeFeatures(self, command.get('id')).execute(action, tid, payload)
         if action in ('update_permissions', 'update_settings', 'project_create', 'project_delete', 'project_rename', 'project_update_roots', 'new_thread', 'archive', 'unarchive'):
             NativeFeatures(self).cache().invalidate()
         if action in ('terminal_start', 'terminal_read', 'terminal_write', 'terminal_resize', 'terminal_close'):
@@ -3327,6 +3383,7 @@ class HostAgent:
         if action in ('archive', 'unarchive', 'project_create', 'project_rename', 'project_delete', 'project_update_roots', 'move_project', 'new_thread', 'rename_thread', 'fork_thread'):
             if not self.appserver and action not in ('archive', 'unarchive', 'new_thread', 'rename_thread'):
                 raise RuntimeError('目标机没有可用的 Codex app-server')
+            management_rpc = (getattr(desktop_queue, 'owner', None) if getattr(desktop_queue, 'queue_desktop', False) is True else None) or self.appserver
             transport = 'codex-app-server'
             if action == 'new_thread':
                 prompt = str(payload.get('prompt', '')).strip()
@@ -3487,12 +3544,12 @@ class HostAgent:
                         raise ValueError('项目目录不能重复')
                     seen.add(key)
                     clean.append(str(path))
-                before = self.appserver.request('project/read', {'projectId': project_id})['project']
+                before = management_rpc.request('project/read', {'projectId': project_id})['project']
                 native_roots = [item['path'] for item in before.get('roots', [])]
                 if [root_key(path) for path in native_roots] != [root_key(path) for path in expected]:
                     self.read_catalog()
                     raise RuntimeError('项目目录已在原 App 或其他面板中改变，请重新打开项目目录后再修改')
-                result = self.appserver.request('project/update', {'projectId': project_id, 'roots': [{'path': path} for path in clean]})
+                result = management_rpc.request('project/update', {'projectId': project_id, 'roots': [{'path': path} for path in clean]})
                 actual = result.get('project', {})
                 actual_roots = [item['path'] for item in actual.get('roots', [])]
                 if actual.get('id') != project_id or [root_key(path) for path in actual_roots] != [root_key(path) for path in clean]:
@@ -3506,7 +3563,7 @@ class HostAgent:
                     known = any((project['id'] == project_id for project in self.projects))
                 if not known:
                     raise ValueError('没有找到该项目')
-                self.appserver.request('project/delete', {'projectId': project_id})
+                management_rpc.request('project/delete', {'projectId': project_id})
             elif action == 'project_rename':
                 project_id = str(payload.get('projectId', '')).strip()
                 name = str(payload.get('name', '')).strip()
@@ -3516,14 +3573,23 @@ class HostAgent:
                     known = any((project['id'] == project_id for project in self.projects))
                 if not known:
                     raise ValueError('没有找到该项目')
-                self.appserver.request('project/update', {'projectId': project_id, 'name': name})
+                management_rpc.request('project/update', {'projectId': project_id, 'name': name})
             elif action == 'move_project':
                 project_id = str(payload.get('projectId', '')).strip()
                 with self.lock:
-                    known = not project_id or any((project['id'] == project_id for project in self.projects))
-                if not known:
+                    projects = list(self.projects)
+                project = next((p for p in projects if p['id'] == project_id), None)
+                if project_id and project is None:
                     raise ValueError('没有找到目标项目')
-                self.appserver.request('thread/metadata/update', {'threadId': tid, 'projectId': project_id})
+                if getattr(desktop_queue, 'queue_desktop', False) is True:
+                    desktop_id = None
+                    if project:
+                        listed = local_projects(app_tool_json(desktop_queue.desktop_tool('list_projects', {}, tid)))
+                        desktop_id = desktop_project_id(self.home, project, listed, projects)
+                    desktop_queue.desktop_tool('move_thread_to_project', {'threadId': tid, 'projectId': desktop_id}, tid)
+                    transport = 'desktop-app-tools'
+                else:
+                    management_rpc.request('thread/metadata/update', {'threadId': tid, 'projectId': project_id})
             elif action == 'rename_thread':
                 name = str(payload.get('name', '')).strip()
                 if not 0 < len(name) <= 240:
@@ -3616,7 +3682,12 @@ class HostAgent:
                     if not isinstance(tier, str) or tier not in allowed:
                         raise ValueError('该模型不支持所选加速模式')
                     settings['serviceTier'] = tier
-            if self.ipc and self.ipc.connected and state:
+            if getattr(desktop_queue, 'queue_desktop', False) is True and getattr(desktop_queue, 'owner', None):
+                if not desktop_queue.owns(tid):
+                    raise ValueError('请先接入原桌面对话')
+                desktop_queue.owner.request('thread/settings/update', {'threadId': tid, **settings})
+                transport = 'codex-desktop-owner'
+            elif self.ipc and self.ipc.connected and state:
                 target = self.desktop_thread_owner(tid)
                 response = self.ipc.request('thread-follower-update-thread-settings', {'conversationId': tid, 'threadSettings': settings, 'activeTurnId': None}, version=2, target=target, timeout=30)
                 transport = 'desktop-ipc'
@@ -3664,26 +3735,9 @@ class HostAgent:
             result = self.question_ui.control(tid, turn_id, entity_key, operation, question_ids, current_id)
             return {'ok': True, 'transport': 'desktop-question-ui', 'questionUi': result, 'confirmedAt': time.time()}
         if action == 'answer_choice':
-            item_id = str(payload.get('itemId', ''))
-            offered, questions = next(((item, questions) for item, questions in pending_async_questions(state) if str(item.get('id', '')) == item_id), (None, []))
-            if not item_id or not offered:
-                raise RuntimeError('这组选项已过期，请刷新对话')
-            requested_ids = payload.get('questionIds')
-            if requested_ids is not None and requested_ids != [question['questionItemId'] for question in questions]:
-                raise RuntimeError('部分问题已在原 App 回答，请等待同步后回答剩余问题')
-            answers = payload.get('answers')
-            skipped = payload.get('skippedQuestionIds', [])
-            ids = [question['questionItemId'] for question in questions]
-            if not isinstance(skipped, list) or len(skipped) > 8 or any((not isinstance(value, str) or value not in ids for value in skipped)) or (len(set(skipped)) != len(skipped)) or (not isinstance(answers, list)) or (len(answers) != len(questions)) or any((not isinstance(answer, str) or len(answer) > 4000 or (not answer.strip() and question_id not in skipped) or (answer.strip() and question_id in skipped) for question_id, answer in zip(ids, answers))) or (not any((answer.strip() for answer in answers))):
-                raise ValueError('请选择或填写每个问题的回答')
-            values = [answer.strip() for answer in answers]
-            replies = [{'questionItemId': question['questionItemId'], 'question': question['title'], 'answer': value} for question, value in zip(questions, values) if value]
-            question_turn = next((turn for turn in reversed(state_turns(state)) if any((isinstance(item, dict) and item.get('id') == item_id for item in turn.get('items', [])))), None)
+            text, replies, question_turn = prepare_async_answer(state, payload)
             if question_turn and question_turn.get('turnId'):
                 question_ack = (str(question_turn['turnId']), replies)
-            text = '<send_user_message_question_reply>\n' + json.dumps(replies, ensure_ascii=False, separators=(',', ':')) + '\n</send_user_message_question_reply>'
-            if len(text) > 32000:
-                raise ValueError('选项回答过长')
             action = 'steer' if state.get('threadRuntimeStatus', {}).get('type') == 'active' else 'send'
         if action == 'resolve_request':
             request_id = str(payload.get('requestId', ''))
@@ -4271,8 +4325,11 @@ class HostAgent:
                                 try:
                                     self.ipc.connect()
                                 except Exception as exc:
-                                    raise ConnectionError('原 App 本机接口尚未就绪或版本未适配') from exc
-                            if sys.platform.startswith('linux') and (not getattr(self, 'native_output_probe_busy', False)):
+                                    if not sys.platform.startswith('linux') or not self.appserver:
+                                        raise ConnectionError('原 App 本机接口尚未就绪或版本未适配') from exc
+                                    from crb.codex.linux_shared_desktop import connect_desktop
+                                    self.ipc = connect_desktop(self)
+                            if sys.platform.startswith('linux') and (not getattr(self.ipc, 'queue_desktop', False)) and (not getattr(self, 'native_output_probe_busy', False)):
                                 self.native_output_probe_busy = True
                                 threading.Thread(target=self.probe_native_output_capability, name='codex-native-output-capability', daemon=True).start()
                             if retry is not None:
@@ -4294,7 +4351,9 @@ class HostAgent:
                         self.automation_signature = automation_signature
                 with self.lock:
                     desired = list(self.wanted)[-40:]
-                if self.ipc and self.ipc.connected:
+                if getattr(self.ipc, 'queue_desktop', False) is True and self.ipc.connected:
+                    self.ipc.poll()
+                elif self.ipc and self.ipc.connected:
                     for tid in desired:
                         with self.lock:
                             following = tid in self.followed
@@ -4304,7 +4363,10 @@ class HostAgent:
                 with self.lock:
                     views = dict(list(self.last_sent.items())[:1])
                     pending_results = list(self.results.items())
-                    payload = {'host': self.cfg['host_id'], 'label': self.cfg['label'], 'desktopConnected': bool(self.ipc and self.ipc.connected), 'terminal': self.terminal_info, 'capabilities': {'queueResume': True, 'nativeSidebar': True, 'nativeReadCache': True, 'nativeReadCacheScope': NativeFeatures(self).cache_scope(), 'nativeLiveOutput': bool(getattr(self, 'native_live_output_available', False)), 'editHistory': True, 'newThreadSettings': True, 'softwarePackages': ['codex']}, 'catalog': [row.copy() for row in self.catalog], 'projects': self.projects, 'models': self.models, 'views': views}
+                    payload = {'host': self.cfg['host_id'], 'label': self.cfg['label'], 'desktopConnected': bool(self.ipc and self.ipc.connected), 'terminal': self.terminal_info, 'capabilities': {'queueResume': True, 'nativeSidebar': True, 'nativeReadCache': True, 'sideWorkbench': bool(self.appserver and self.ipc and self.ipc.connected and getattr(self.ipc, 'supports_side_workbench', False)), 'foregroundThreadWatch': getattr(self.ipc, 'queue_desktop', False) is True, 'nativeReadCacheScope': NativeFeatures(self).cache_scope(), 'nativeLiveOutput': bool(getattr(self, 'native_live_output_available', False)), 'editHistory': True, 'newThreadSettings': True, 'softwarePackages': ['codex']}, 'catalog': [row.copy() for row in self.catalog], 'projects': self.projects, 'models': self.models, 'views': views}
+                    if getattr(self.ipc, 'queue_desktop', False) is True:
+                        actions = self.ipc.actions
+                        payload['capabilities'].update(actions=list(actions), queueResume='queue_resume' in actions, nativeSidebar=getattr(self.ipc, 'native_sidebar', False) is True, nativeReadCache='native_read' in actions, editHistory='edit_user_turn' in actions, editHistoryViaDesktopForm='edit_user_turn' in getattr(self.ipc, 'form_actions', ()), newThreadSettings='new_thread' in actions, desktopQueue=True)
                 results = {}
                 result_bytes = 0
                 for cid, value in pending_results:
@@ -4326,6 +4388,8 @@ class HostAgent:
                 with opener.open(req, timeout=60) as resp:
                     reply = json.load(resp)
                 self.update_native_output_demand(reply.get('liveOutputDemand', []))
+                if getattr(self.ipc, 'queue_desktop', False) is True and 'foregroundThreads' in reply:
+                    self.ipc.renew_foreground(reply['foregroundThreads'])
                 refills = []
                 with self.lock:
                     for tid, value in views.items():

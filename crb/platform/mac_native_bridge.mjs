@@ -67,6 +67,9 @@ export function startBridge({ input = process.stdin, output = process.stdout,
   const sockets = new Set();
   let sequence = 0, closed = false, listener = null, endpoint = null;
   let available = new Set();
+  let protocolVersion = null;
+  const protocolKey = 'io.modelcontextprotocol/protocolVersion';
+  const capabilitiesKey = 'io.modelcontextprotocol/clientCapabilities';
   const writeChild = value => child.stdin.write(JSON.stringify(value) + '\n');
   const writeApp = value => output.write(JSON.stringify(value) + '\n');
   const appInput = readline.createInterface({ input, crlfDelay: Infinity });
@@ -112,7 +115,12 @@ export function startBridge({ input = process.stdin, output = process.stdout,
       // Standard MCP metadata; the bundled server supplies its own call/turn IDs
       // and submits to the App, including its unchanged native eligibility checks.
       return await nativeRequest('tools/call', { name: p.tool, arguments: p.arguments,
-        _meta: { 'openai/threadId': p.threadId } }, timeout);
+        _meta: { 'openai/threadId': p.threadId,
+          ...(protocolVersion && protocolVersion >= '2026-07-28' ? {
+            [protocolKey]: protocolVersion,
+            // Private panel calls do not implement sampling or elicitation.
+            [capabilitiesKey]: {},
+          } : {}) } }, timeout);
     } finally { activeCalls--; }
   }
 
@@ -167,11 +175,16 @@ export function startBridge({ input = process.stdin, output = process.stdout,
       if (p.kind === 'app') {
         appIds.delete(p.key);
         if (p.method === 'initialize' && message.result) {
+          if (typeof message.result.protocolVersion === 'string')
+            protocolVersion = message.result.protocolVersion;
           const { instructions: _instructions, ...result } = message.result;
           message = { ...message, result: { ...result,
             serverInfo: { name: 'codex-relay-native-bridge', version: '1.0' } } };
         }
         if (p.method === 'tools/list' && Array.isArray(message.result?.tools)) {
+          // Modern stateless MCP can list tools without initialize. Adopt the
+          // envelope only after the bundled server accepted this App request.
+          if (typeof p.protocolVersion === 'string') protocolVersion = p.protocolVersion;
           available = new Set(message.result.tools.map(t => t.name));
           try { listen(); } catch { close(); return; }
           message = { ...message, result: { ...message.result, tools: [] } };
@@ -189,7 +202,8 @@ export function startBridge({ input = process.stdin, output = process.stdout,
     try { message = JSON.parse(line); } catch { return; }
     if (message.method && Object.hasOwn(message, 'id')) {
       const id = 'app:' + (++sequence), key = JSON.stringify(message.id);
-      pending.set(id, { kind: 'app', originalId: message.id, key, method: message.method });
+      pending.set(id, { kind: 'app', originalId: message.id, key, method: message.method,
+        protocolVersion: message.params?._meta?.[protocolKey] });
       appIds.set(key, id);
       writeChild({ ...message, id });
     } else {

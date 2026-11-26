@@ -1,0 +1,11 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>侧聊与搜索 · CRB</title><link rel="stylesheet" href="workbench.css"><script defer src="workbench.js"></script></head><body>
+<header><div><small id="label">CRB</small><h1>对话工作区</h1></div><select id="parents" aria-label="切换主对话"></select><button id="toggleSide" type="button" aria-controls="aside" aria-expanded="false">侧边</button></header>
+
+<main><section id="primary"><h2>主对话</h2><div id="mainLog" class="log"></div><button hidden id="mainOlder">更早消息</button>
+<form id="mainForm"><textarea id="mainDraft" required maxlength="12000" aria-label="主对话消息" placeholder="发送到主对话…"></textarea><button>发送到主对话</button></form></section>
+<section id="aside"><nav aria-label="工作区视图"><button id="mainTab" class="mobile">主对话</button><button id="sideTab">侧边聊天</button><button id="searchTab">搜索</button><button id="diffTab">更改</button></nav><article id="side"><div class="row"><h2>侧边聊天</h2><select id="children" aria-label="选择侧聊"><option value="">暂无侧聊</option></select><button id="refresh" aria-label="刷新侧聊列表">刷新</button><button id="create">＋ 新侧聊</button><button id="closeSide" type="button" title="关闭当前侧聊，保留记录和草稿" disabled>关闭侧聊</button></div><div id="sideLog" class="log"></div><button hidden id="sideOlder">更早消息</button>
+<form id="sideForm"><textarea id="sideDraft" required maxlength="12000" aria-label="侧聊消息" placeholder="向侧聊发送消息…"></textarea><button>发送到侧聊</button></form></article>
+<article id="search" hidden><h2>搜索</h2><form id="searchForm"><select id="mode" aria-label="搜索范围"><option value="chats">项目聊天正文</option><option value="names">文件名</option><option value="content">文件内容</option><option value="occurrences">当前对话</option></select><input id="query" required maxlength="256" aria-label="关键词" placeholder="输入关键词"><input hidden id="glob" aria-label="文件类型" placeholder="文件类型，例如 *.py"><button>查找</button></form><div id="hits"></div><button id="moreHits" hidden>下一页</button><pre id="preview"></pre></article>
+<article id="diff" hidden><h2>工作区更改</h2><select id="diffScope" aria-label="更改范围"><option value="unstaged">未暂存</option><option value="staged">已暂存</option></select><pre id="changes"></pre></article></section></main>
+<p id="notice" role="status" aria-live="polite"></p></body></html>

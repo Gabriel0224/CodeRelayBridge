@@ -123,6 +123,7 @@
           <button id="filePreviewToggle" class="secondary" data-icon="▣" aria-label="预览文件和网页" type="button" title="重新打开已预览的文件和网页" disabled>▣ 预览 <span id="filePreviewCount">0</span></button>
         </div>
         <div class="workspace-tool-row">
+          <button id="openWorkbench" class="secondary" type="button" data-icon="◨" aria-label="侧边" title="侧聊与搜索" aria-expanded="false" aria-controls="workbenchPanel" hidden>◨ <span>侧边</span></button>
           <button id="trafficToggle" class="secondary" data-icon="↕" aria-label="流量" type="button" title="查看公网面板流量">↕ 流量</button>
           <button id="codexUpdatesToggle" class="secondary" data-icon="↑" type="button" hidden>↑ 软件更新</button>
           <button id="fontToggle" class="secondary" data-icon="Aa" aria-label="字体" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="fontMenu" title="调整字体大小"><span aria-hidden="true">Aa</span> <span>字体</span></button>
@@ -135,6 +136,8 @@
       </div>
     </header>
 
+    <div class="chat-panes">
+    <div class="conversation-column">
     <section id="notice" aria-label="待确认请求" hidden></section>
     <section id="timeline" aria-label="对话内容">
       <div class="empty"><div class="empty-icon">◈</div><h2>工作在原来的设备上继续</h2><p>这里显示桌面 App 的原对话、执行过程和回复。</p></div>
@@ -194,6 +197,12 @@
       </form>
       <div id="sendResult" role="status"></div>
     </div>
+    </div>
+    <section id="workbenchPanel" aria-labelledby="workbenchTitle" hidden>
+      <div class="workbench-bar"><strong id="workbenchTitle">侧边</strong><button id="closeWorkbench" class="quiet" type="button" aria-label="关闭侧边面板" title="关闭侧边面板">关闭 ×</button></div>
+      <div id="workbenchContent"></div>
+    </section>
+    </div>
   </main>
 
   <div id="terminalResizer" class="pane-resizer vertical terminal-resizer" role="separator" aria-label="调整终端栏宽度" aria-orientation="vertical" tabindex="0" hidden></div>
@@ -241,6 +250,12 @@
         <input id="filePath" aria-label="目标机文件路径" placeholder="输入目标机文件夹路径" autocomplete="off" spellcheck="false">
         <button type="submit">前往</button>
       </form>
+      <form id="fileContentSearch" class="file-path-form">
+        <input id="fileSearchQuery" required maxlength="256" aria-label="在文件中搜索" placeholder="在当前文件夹中搜索文字">
+        <input id="fileSearchGlob" maxlength="128" aria-label="文件类型" placeholder="*.py">
+        <button type="submit">搜索</button>
+      </form>
+      <div id="fileSearchResults" role="status"></div>
       <div class="file-browser-toolbar">
         <button id="fileTreeToggle" class="secondary" type="button" aria-expanded="true" aria-controls="fileTreePanel">目录索引</button>
         <button id="fileGoParent" class="secondary" type="button">↑ 上一级</button>

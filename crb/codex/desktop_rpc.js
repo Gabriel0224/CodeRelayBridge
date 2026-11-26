@@ -170,6 +170,25 @@
         if (!await rpc.hasLocalHistorySubscription(id)) throw Error('Native thread is not attached');
         assertCurrent();
         const a = p.arguments || {};
+        if (p.operation === 'side-create') {
+          const source = await rpc.getConversation(id);
+          if (!source) throw Error('Parent conversation is not loaded');
+          const result = await rpc.forkConversationFromLatest({
+            sourceConversationId: id,
+            attachToSource: true,
+            sideConversation: true,
+            addForkedSyntheticItem: false,
+            cwd: source.cwd,
+            workspaceRoots: source.workspaceRoots,
+          });
+          if (result?.status !== 'created' || !result.conversationId)
+            throw Error('Side chat creation was not confirmed; refresh before trying again');
+          const child = await rpc.getConversation(result.conversationId);
+          if (child?.attachedToThreadId !== id)
+            throw Error('Side chat ownership was not confirmed; refresh before trying again');
+          return {ok: true, thread: {id: result.conversationId, attachedToThreadId: id}};
+        }
+
         if (p.operation === 'queue-remove-receipt') {
           const coordinator = await rpc.getTurnCoordinator();
           try {

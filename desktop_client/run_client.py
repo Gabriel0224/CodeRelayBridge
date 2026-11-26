@@ -6,6 +6,11 @@ import traceback
 from pathlib import Path
 
 def main():
+    if sys.platform.startswith('linux') and sys.argv[1:2] == ['--codex-desktop-runtime']:
+        from desktop_client.bridge_runtime import sanitize_child_launches
+        from crb.codex.linux_owner_transport import desktop_runtime
+        sanitize_child_launches()
+        return desktop_runtime(sys.argv[2:])
     if len(sys.argv) == 3 and sys.argv[1] == '--installer-uninstall':
         from desktop_client.installer_runtime import uninstall
         from desktop_client.connections import atomic_json

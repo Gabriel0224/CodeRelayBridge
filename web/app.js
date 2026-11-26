@@ -147,10 +147,16 @@ const DEFAULT_LAYOUT = {sidebarWidth: 316, terminalWidth: 520,
 let layoutState = {...DEFAULT_LAYOUT};
 let activeTerminalId = '';
 let terminalPanelOpen = false;
+let workbenchContext = null;
 let terminalPollActive = false;
 let terminalSequence = 0;
 let terminalContext = null;
 let terminalView = 'terminal';
+let fileSearchSeq = 0;
+function resetFileSearch() {
+  fileSearchSeq++;
+  $('fileSearchResults').replaceChildren();
+}
 let fileBrowserToken = 0;
 let fileBrowserState = null;
 let fileContext = null;
@@ -780,9 +786,10 @@ function threadMatchesNavigation(thread) {
 
 function rememberedThread(host) {
   const threadId = hostNavigation.get(host.id)?.threadId;
-  return host.threads.find(thread => thread.id === threadId) ||
-    host.threads.find(threadMatchesNavigation) ||
-    host.threads.find(thread => !thread.archived) || host.threads[0] || null;
+  const threads = host.threads.filter(thread => !thread.attachedToThreadId);
+  return threads.find(thread => thread.id === threadId) ||
+    threads.find(threadMatchesNavigation) ||
+    threads.find(thread => !thread.archived) || threads[0] || null;
 }
 
 function restoreCatalogScroll(hostId) {
@@ -1458,6 +1465,21 @@ function snapshotFromReply(target, reply, base, epoch) {
   return {thread, revision, online: Boolean(reply.online)};
 }
 
+let lastForegroundRead = 0;
+function followsForegroundThread(target) {
+  return selected?.host === target?.host && selected?.thread === target?.thread &&
+    !document.hidden && !$('workspace').hidden && !threadPreviewOnly && !threadWatchPending &&
+    currentHost()?.capabilities?.foregroundThreadWatch === true;
+}
+
+// Ordinary incremental reads renew the lease. Idle pages send one small
+// unchanged-revision read when there have been no updates for twenty seconds.
+setInterval(() => {
+  if (selected && followsForegroundThread(selected) && Date.now() - lastForegroundRead >= 20000) {
+    void refreshThread().catch(() => {});
+  }
+}, 10000);
+
 async function fetchThreadSnapshot(target, afterCommand = false, options = {}) {
   const key = threadKey(target.host, target.thread);
   // A read started before a mutation cannot acknowledge that mutation. Keep the
@@ -1469,7 +1491,9 @@ async function fetchThreadSnapshot(target, afterCommand = false, options = {}) {
     const base = cachedThreadSnapshot(target);
     const interest = catalog.find(host => host.id === target.host)?.capabilities?.nativeLiveOutput === true ?
       `&liveOutput=${nativeOutputWanted(target) ? '1' : '0'}` : '';
-    const path = `/api/lite/thread?host=${encodeURIComponent(target.host)}&id=${encodeURIComponent(target.thread)}${interest}`;
+    const follow = followsForegroundThread(target);
+    if (follow) lastForegroundRead = Date.now();
+    const path = `/api/lite/thread?host=${encodeURIComponent(target.host)}&id=${encodeURIComponent(target.thread)}${interest}${follow ? '&follow=1' : ''}`;
     let reply = await api(path + (base?.revision ? `&since=${base.revision}&generation=${encodeURIComponent(relayGeneration)}` : ''), undefined, options);
     if ((!base && ['patch', 'unchanged'].includes(reply.mode))) reply = await api(path, undefined, options);
     if (threadFetches.get(key) !== request) return null;
@@ -2271,6 +2295,7 @@ let previewModeChanging = false;
 
 function showFilePreview() {
   if (previewDialogClosing) return;
+  closeWorkbench();
   // One visible feature surface: returning to a mode restores its own pane.
   if (terminalPanelOpen) hideTerminalPanel();
   const dialog = $('filePreviewDialog');
@@ -3543,7 +3568,7 @@ function renderCatalog({preload = true} = {}) {
 
   const filter = $('search').value.trim().toLowerCase();
   const visible = host.threads.filter(thread => {
-    if (thread.isSubagent === true) return false;
+    if (thread.isSubagent === true || thread.attachedToThreadId) return false;
     if (archiveFilter === 'active' && thread.archived) return false;
     if (archiveFilter === 'archived' && !thread.archived) return false;
     const pid = thread.projectId || 'unassigned';
@@ -3587,6 +3612,7 @@ function clearThread() {
   threadReadSnapshot = null;
   clearAssetCache();
   selected = null;
+  syncWorkbench();
   current = null;
   syncNativeOutputPolling();
   syncProjectLocator();
@@ -3763,6 +3789,7 @@ async function selectThread(host, thread, revealSelection = false, userInitiated
     if (changingHost || revealSelection) revealThreadInFilters(thread);
   }
   selected = {host: host.id, thread: thread.id};
+  syncWorkbench();
   if (userInitiated) threadReadAttention = threadKey(host.id, thread.id);
   const selection = selected;
   const target = {...selected};
@@ -4235,6 +4262,7 @@ function renderItem(item, choiceState = 'past') {
   const historicalEditing = currentHost()?.capabilities?.editHistory === true && current?.canEditHistory === true &&
     supportsAction(currentHost(), 'edit_user_turn');
   const editable = (historicalEditing || supportsAction(currentHost(), 'edit_last_user_turn')) && item.type === 'userMessage' && !item.localDelivery && !item.scheduledTrigger && !threadPreviewOnly && current?.owned && current?.online &&
+    !(currentHost()?.capabilities?.editHistoryViaDesktopForm && item.attachments?.length) &&
     current?.source === 'desktop-live' && current?.status !== 'active' &&
     (historicalEditing && item.turnId || current?.editableUserMessage?.turnId === item.turnId &&
     current?.editableUserMessage?.itemId === item.id);
@@ -4433,6 +4461,9 @@ function showSentMessageEditor(item, record) {
   const hint = document.createElement('p');
   hint.textContent = historical ? '重新发送会替换这条消息及后续对话内容；原附件会保留，磁盘上的文件改动不会自动撤销。' :
     '重新发送会替换这条消息之后的最新回复；原附件会保留。';
+  if (historical && currentHost()?.capabilities?.editHistoryViaDesktopForm) {
+    hint.textContent = '目标电脑会打开原 App 的编辑框。只有原 App 提供编辑按钮的文字消息可以重发。重发会替换这条消息及后续对话，磁盘上的文件改动会保留。';
+  }
   const actions = document.createElement('div');
   actions.className = 'sent-edit-actions';
   const cancel = document.createElement('button');
@@ -6001,6 +6032,7 @@ async function fileApi(action, host, payload = {}) {
 function applyTerminalView() {
   const files = terminalView === 'files';
   const agents = terminalView === 'agents';
+  if (!files) resetFileSearch();
   if (!files) closeFileContextMenu();
   $('terminalPanelTitle').textContent = agents ? '子智能体' : files ? '目标机文件' : 'SSH 终端';
   const hostId = $('terminalHostSelect').value;
@@ -6483,6 +6515,7 @@ function renderFileRow(hostId, entry) {
 }
 
 async function loadFileDirectory(hostId, path = '', offset = 0, append = false) {
+  resetFileSearch();
   const token = ++fileBrowserToken;
   $('fileBrowserStatus').textContent = '正在读取文件夹…';
   $('fileBrowserStatus').className = '';
@@ -7343,6 +7376,7 @@ function renderTerminalTabs() {
 }
 
 function showTerminalPanel() {
+  closeWorkbench();
   terminalPanelOpen = true;
   $('extensionsToggle').setAttribute('aria-expanded', 'true');
   $('terminalPanel').hidden = false;
@@ -7581,6 +7615,7 @@ async function pollActiveTerminal() {
 }
 
 function syncTerminalControls() {
+  syncWorkbench();
   const selector = $('terminalHostSelect');
   const previous = selector.value;
   const available = catalog.filter(host => physicalHostId(host) === host.id &&
@@ -8416,6 +8451,32 @@ $('terminalModeTerminal').onclick = () => setTerminalView('terminal');
 $('terminalModeFiles').onclick = () => setTerminalView('files');
 $('terminalModeAgents').onclick = () => setTerminalView('agents');
 $('subagentScope').onchange = renderSubagents;
+$('fileContentSearch').onsubmit = async event => {
+  event.preventDefault();
+  const state = fileBrowserState;
+  const host = $('terminalHostSelect').value;
+  if (!state || state.host !== host || filePaths.get(host) !== state.path) return;
+  const seq = ++fileSearchSeq;
+  const output = $('fileSearchResults');
+  const current = () => seq === fileSearchSeq && terminalView === 'files' &&
+    host === $('terminalHostSelect').value && fileBrowserState === state;
+  output.textContent = '正在搜索…';
+  try {
+    const result = await fileApi('search_content', host, {path: state.path,
+      query: $('fileSearchQuery').value, glob: $('fileSearchGlob').value});
+    if (!current()) return;
+    output.replaceChildren();
+    for (const hit of result.matches) {
+      const line = document.createElement('div');
+      line.textContent = hit.path + ':' + hit.line + '  ' + hit.snippet;
+      output.append(line);
+    }
+    if (result.truncated) output.append('已达到搜索上限，请缩小范围');
+    else if (!result.matches.length) output.textContent = '无匹配项';
+  } catch (error) {
+    if (current()) output.textContent = error.message;
+  }
+};
 $('fileTreeToggle').onclick = () => {
   fileTreeOpen = !fileTreeOpen;
   applyFileTreeLayout();
@@ -9770,3 +9831,73 @@ api('/api/ui/title').then(result => {
   applyFeedbackMetadata(result);
 }).catch(() => {});
 start().catch(showLogin);
+
+function closeWorkbench(restoreFocus = false) {
+  if (!workbenchContext) return;
+  workbenchContext = null;
+  $('workbenchPanel').hidden = true;
+  $('openWorkbench').setAttribute('aria-expanded', 'false');
+  $('workbenchContent').replaceChildren();
+  if (restoreFocus) $('openWorkbench').focus();
+}
+
+function syncWorkbench(open = false) {
+  const host = currentHost();
+  const thread = host?.id === selected?.host && host?.threads.find(t => t.id === selected.thread);
+  const supported = thread && !thread.attachedToThreadId && typeof host.capabilities?.sideWorkbench === 'boolean';
+  $('openWorkbench').hidden = !supported;
+  if (!supported) return closeWorkbench();
+  let reason = '';
+  if (!host.online) reason = '目标电脑离线，恢复连接后可使用侧边。';
+  else if (!host.desktopConnected) reason = 'CRB 客户端在线，尚未连接这台电脑的 Codex App。';
+  else if (!host.capabilities.sideWorkbench) reason = '当前 Codex 连接尚不支持侧聊与搜索。';
+  if (!open && !workbenchContext) return;
+  if (workbenchContext?.host === host.id && workbenchContext.parent === thread.id &&
+      workbenchContext.project === thread.projectId && workbenchContext.reason === reason) return;
+  workbenchContext = {host:host.id, parent:thread.id, project:thread.projectId, reason};
+  $('workbenchPanel').hidden = false;
+  $('openWorkbench').setAttribute('aria-expanded', 'true');
+  if (reason) {
+    const status = document.createElement('p');
+    status.setAttribute('role', 'status');
+    status.textContent = uiText(reason);
+    $('workbenchContent').replaceChildren(status);
+  } else {
+    const frame = document.createElement('iframe');
+    frame.id = 'workbenchFrame';
+    frame.title = uiText('侧聊与搜索');
+    frame.src = '/lite/vendor/workbench/index.html';
+    $('workbenchContent').replaceChildren(frame);
+  }
+}
+
+$('openWorkbench').onclick = () => {
+  if (workbenchContext) return closeWorkbench(true);
+  if (terminalPanelOpen) hideTerminalPanel();
+  if ($('filePreviewDialog').open) $('filePreviewDialog').close();
+  syncWorkbench(true);
+  if (workbenchContext) $('closeWorkbench').focus();
+};
+$('closeWorkbench').onclick = () => closeWorkbench(true);
+$('workbenchPanel').addEventListener('keydown', event => {
+  if (event.key === 'Escape') closeWorkbench(true);
+});
+window.crbWorkbenchRequest = async (op, args={}, caller) => {
+  const ctx = workbenchContext;
+  if (!ctx || ctx.reason || !caller || caller !== $('workbenchFrame')?.contentWindow ||
+      ctx.host !== selected?.host || ctx.parent !== selected?.thread)
+    throw Error('主对话已切换，请重新打开侧边');
+  const host = currentHost();
+  const rows = host.threads.filter(t => !t.attachedToThreadId &&
+    (t.id===ctx.parent || (ctx.project && t.projectId===ctx.project && !t.isSubagent)));
+  if (op==='init') return {parents:rows.map(t=>({id:t.id,name:t.title})),parent:ctx.parent, label:host.label, scope:ctx.host};
+  const thread = rows.find(t=>t.id===args.parent);
+  if (!thread) throw Error('未找到该项目的主对话');
+  if (op==='send' && args.target===thread.id) return issueCommand('send',{host:ctx.host,thread:thread.id,text:args.text});
+  if (op==='content') {
+    if (!thread.cwd) throw Error('当前对话没有文件夹');
+    return fileApi('search_content', physicalHostId(host) || ctx.host, {path:thread.cwd,query:args.query,glob:args.glob});
+  }
+  return issueCommand(['create','send'].includes(op)?'native_action':'native_read', {host:ctx.host,
+    thread:thread.id, payload:{...args,operation:'side_workbench',op}});
+};

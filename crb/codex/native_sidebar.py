@@ -60,6 +60,8 @@ class NativeSidebar:
                 pass
         reverse = {v: k for k, v in native_ids.items()}
         rows = raw.get('sections')
+        if 'sections' not in raw and 'schemaVersion' in raw and isinstance(raw.get('threads'), list) and isinstance(raw.get('sidebarPreferences'), dict):
+            rows = []
         if not isinstance(rows, list) or len(rows) > 1000:
             raise RuntimeError('原 App 分区列表无效')
         sections, seen = ([], set())
@@ -71,7 +73,7 @@ class NativeSidebar:
             seen.add(sid)
             sections.append({'id': sid, 'name': str(row.get('name') or sid)[:500], 'custom': sid not in BUILTINS, 'items': [{'type': 'thread', 'id': key[19:]} if key.startswith('codex:thread:local:') else {'type': 'project', 'id': reverse[key[14:]]} for key in keys if isinstance(key, str) and (key.startswith('codex:thread:local:') and key[19:] in threads or (key.startswith('codex:project:') and key[14:] in reverse))], 'threadIds': [key[19:] for key in keys if isinstance(key, str) and key.startswith('codex:thread:local:') and (key[19:] in threads)], 'projectIds': [reverse[key[14:]] for key in keys if isinstance(key, str) and key.startswith('codex:project:') and (key[14:] in reverse)]})
         preferences = raw.get('sidebarPreferences') or {}
-        state = {'sections': sections, 'projectNativeIds': native_ids, 'preferences': preferences, 'capabilities': ui_capabilities(self.agent) if hasattr(self.agent, 'app_tools') else {}}
+        state = {'sections': sections, 'projectNativeIds': native_ids, 'preferences': preferences, 'capabilities': ui_capabilities(self.agent) if hasattr(self.agent, 'app_tools') and getattr(getattr(self.agent, 'ipc', None), 'queue_desktop', False) is not True else {}}
         state['revision'] = revision([rows, native_ids, preferences])
         self.agent.native_live_output_available = state['capabilities'].get('liveOutput') is True
         return (state, rows)
@@ -81,7 +83,9 @@ class NativeSidebar:
         with self.connection(tid, allow_create=action == 'native_action') as call:
             state, raw = self.snapshot(call)
             if action == 'native_read' and operation == 'sidebar':
-                if payload.get('emojiThreadId') == tid and tid and any((row['id'] == tid for row in self.agent.catalog)):
+                ipc = getattr(self.agent, 'ipc', None)
+                tools = getattr(ipc, 'desktop_tools', None) if getattr(ipc, 'queue_desktop', False) is True else None
+                if payload.get('emojiThreadId') == tid and tid and (tools is None or 'get_thread_emoji' in tools) and any((row['id'] == tid for row in self.agent.catalog)):
                     emoji = call('get_thread_emoji', {'threadId': tid}).get('emoji')
                     if emoji is None or isinstance(emoji, str):
                         state['threadEmojis'] = {tid: emoji}

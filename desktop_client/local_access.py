@@ -48,7 +48,7 @@ class LocalAccess:
         agent.execute = types.MethodType(execute, agent)
 
     def files(self, request):
-        if not isinstance(request, dict) or request.get('action') not in ('roots', 'list', 'folders', 'read', 'create', 'copy', 'delete', 'document_probe', 'document_begin', 'document_chunk', 'document_commit', 'document_status', 'document_abort', 'document_forget'):
+        if not isinstance(request, dict) or request.get('action') not in ('roots', 'list', 'folders', 'search_content', 'read', 'create', 'copy', 'delete', 'document_probe', 'document_begin', 'document_chunk', 'document_commit', 'document_status', 'document_abort', 'document_forget'):
             raise ValueError('不支持的客户端文件操作')
         action = request['action']
         payload = request.get('payload') or {}
